@@ -36,6 +36,7 @@ import sh.paseo.android.core.*
 
 @Composable
 fun PaseoApp(vm: AppViewModel) {
+    LocalNetworkPermission(vm)
     val state by vm.state.collectAsStateWithLifecycle()
     val screen by vm.screen.collectAsStateWithLifecycle()
     val hosts by vm.hosts.collectAsStateWithLifecycle()

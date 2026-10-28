@@ -24,16 +24,21 @@
 
 ## 构建
 
-需要 JDK 17、Android SDK Platform 36（Build Tools 由 Gradle 按需安装）；最低 Android 8.0（API 26）。项目包含带校验和的 Gradle Wrapper，无需全局安装 Gradle。
+需要 JDK 27、Android SDK Platform 37.2 和 Build Tools 37.0.0；最低 Android 8.0（API 26）。项目包含带校验和的 Gradle Wrapper，无需全局安装 Gradle。
 
-1. 在 Android Studio 中打开当前目录，使用 JDK 17 并同步项目；或配置 `JAVA_HOME` 和 `ANDROID_HOME`。
+1. 在 Android Studio 中打开当前目录，将 Gradle JDK 设置为 JDK 27 并同步项目；命令行通过 `JAVA_HOME` 和 `ANDROID_HOME` 配置。Gradle、编译和测试使用 JDK 27，Java/Kotlin 字节码目标仍为 17。
 2. 命令行构建（遵循 [AGENTS.md](AGENTS.md) 中的内存与并发限制）：
 
 ```sh
-./gradlew --no-daemon --no-parallel --max-workers=1 \
-  -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
-  -Pkotlin.compiler.execution.strategy=in-process \
-  :core:test :app:lintDebug :app:assembleDebug
+run_gradle() {
+  ./gradlew --no-daemon --no-parallel --max-workers=1 \
+    -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
+    -Pkotlin.compiler.execution.strategy=in-process "$@"
+}
+run_gradle :core:test
+run_gradle :app:testDebugUnitTest
+run_gradle :app:assembleDebug
+run_gradle :app:lintDebug
 ```
 
 安装：
@@ -54,9 +59,33 @@ adb install -r app/build/outputs/apk/benchmark/app-benchmark.apk
 
 `benchmark` 使用本机 debug 密钥签名、关闭调试并允许 shell profiling，只用于本地验证。正式发布使用 `release`，需自行配置发布签名。
 
+## 工具链与依赖版本
+
+以下为 2026-10-29 核对官方发布源后的稳定版本，均固定版本号，不使用动态版本或预览版。
+
+| 组件 | 版本 |
+| --- | --- |
+| 构建 JDK | 27（本机 OpenJDK 27.0.1） |
+| Gradle Wrapper | 9.8.2 |
+| Android Gradle Plugin | 9.5.0，使用内置 Kotlin |
+| Kotlin / Compose 编译器插件 | 2.4.21 |
+| Android compile SDK / target SDK | 37.2 / 37 |
+| Android Build Tools / Command-line Tools | 37.0.0 / 23.0 |
+| Compose BOM | 2026.09.00 |
+| Activity / Lifecycle | 1.13.0 / 2.11.0 |
+| Coroutines / Serialization | 1.11.0 / 1.12.0 |
+| OkHttp / MockWebServer | 5.5.1 / 5.5.1 |
+| Material Icons / JUnit 4 | 1.7.8 / 4.13.2（这两个 artifact 的最新稳定版） |
+
+项目默认关闭 Gradle daemon 和项目并行，限制一个 worker，并使用 Kotlin 进程内编译；Lint JVM 堆限制为 512 MiB，各验证阶段使用独立的串行调用；详细资源限制见 [AGENTS.md](AGENTS.md)。
+
+官方版本源：[Gradle](https://services.gradle.org/versions/current)、[AGP](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml)、[Kotlin](https://kotlinlang.org/docs/releases.html)、[Compose BOM](https://developer.android.com/develop/ui/compose/bom/bom-mapping)、[Android SDK](https://dl.google.com/android/repository/repository2-3.xml)。
+
 ## 连接已有主机
 
-在主机启动 Paseo，确认 daemon 的监听地址能被手机访问。在应用中添加主机，例如 `192.168.1.10:6767` 或 `wss://paseo.example.com/ws`；如主机设置了密码，一并填写。新会话的工作目录指主机上的绝对路径。手机和主机可通过同一局域网或 VPN 互通。
+在主机启动 Paseo，确认 daemon 的监听地址能被手机访问。Android 17 及以上在连接局域网主机时会请求「附近设备」权限；拒绝后可再次点击主机重试。公网主机和本机回环地址无需该权限。`ws://` 直连通过 Network Security Configuration 保持兼容。
+
+在应用中添加主机，例如 `192.168.1.10:6767` 或 `wss://paseo.example.com/ws`；如主机设置了密码，一并填写。新会话的工作目录指主机上的绝对路径。手机和主机可通过同一局域网或 VPN 互通。
 
 Android 模拟器访问开发机使用 `10.0.2.2`；也可执行 `adb reverse tcp:6767 tcp:6767` 后连接 `127.0.0.1:6767`。
 
@@ -73,20 +102,25 @@ tools/   本地模拟 daemon 和 Android UI smoke 脚本
 ## 验证
 
 ```sh
-./gradlew --no-daemon --no-parallel --max-workers=1 \
-  -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
-  -Pkotlin.compiler.execution.strategy=in-process \
-  :core:test :app:lintDebug :app:assembleDebug
+run_gradle() {
+  ./gradlew --no-daemon --no-parallel --max-workers=1 \
+    -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
+    -Pkotlin.compiler.execution.strategy=in-process "$@"
+}
+run_gradle :core:test
+run_gradle :app:testDebugUnitTest
+run_gradle :app:assembleDebug
+run_gradle :app:lintDebug
 ```
 
-协议测试包含地址与密码解析、认证拒绝、RPC 错误、历史和实时事件重叠、工具生命周期、长流式消息、会话加载与权限响应。
+单元测试还覆盖局域网、VPN、公网与回环地址的权限分类。协议测试包含地址与密码解析、认证拒绝、RPC 错误、历史和实时事件重叠、工具生命周期、长流式消息、会话加载与权限响应。
 
 无需真实代理的 UI 验证（使用专用模拟器）：
 
 ```sh
 python3 tools/mock_daemon.py --port 6768
 # 另一个终端；emulator-5554 应已启动并安装 APK
-python3 tools/android_smoke.py --reset
+python3 tools/android_smoke.py --reset --deny-lan-once
 ```
 
 `--reset` 会清除模拟器中本应用的数据。模拟主机密码为 `test`，不执行真实 shell 命令。截图输出在 `app/build/smoke/`。

@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import sh.paseo.android.core.*
 import sh.paseo.android.data.HostStore
+import sh.paseo.android.data.LocalNetworkAccess
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     val repository = PaseoRepository()
@@ -22,6 +23,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val sending = MutableStateFlow(false)
     val creating = MutableStateFlow(false)
     val drafts = MutableStateFlow<Map<String, String>>(emptyMap())
+    val localNetworkPermissionRequest = MutableStateFlow<Host?>(null)
+    private var connectionRequestJob: Job? = null
     private val messageIds = mutableMapOf<String, Pair<String, String>>()
 
     init {
@@ -35,6 +38,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun connect(host: Host) {
+        connectionRequestJob?.cancel()
+        localNetworkPermissionRequest.value = null
+        connectionRequestJob = action {
+            if (LocalNetworkAccess.permissionMissing(getApplication()) && LocalNetworkAccess.isLocalHost(host)) {
+                screen.value = "hosts"
+                localNetworkPermissionRequest.value = host
+            } else connectNow(host)
+        }
+    }
+    fun onLocalNetworkPermissionResult(granted: Boolean) {
+        val host = localNetworkPermissionRequest.value ?: return
+        localNetworkPermissionRequest.value = null
+        if (granted) connectNow(host)
+        else notices.tryEmit("连接局域网主机需要附近设备权限，请在系统设置中允许后重试。")
+    }
+    private fun connectNow(host: Host) {
         repository.connect(host)
         screen.value = "sessions"
         action { persist(host.id) }

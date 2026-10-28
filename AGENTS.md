@@ -4,15 +4,16 @@
 
 ## Gradle 与内存限制（必须遵守）
 
-- 使用项目的 `./gradlew` 和 JDK 17。
+- 使用项目的 `./gradlew` 和 JDK 27；Gradle、编译和测试使用同一 JDK。Android 的 Java/Kotlin 字节码目标保持 17，不要将其误改为运行时 JDK 版本。
 - **每次 Gradle 调用必须带上 `--no-daemon`**，不启动长期驻留的 Gradle daemon。
 - **同一时间只允许一个构建进程**。不得在多个终端、后台任务或工具调用中同时运行 Gradle；上一条命令确实退出后，才能执行下一条。
 - 必须使用 `--no-parallel --max-workers=1`，关闭项目并行并限制 worker 数量。
 - 必须使用 `-Pkotlin.compiler.execution.strategy=in-process`，让 Kotlin 编译器在 Gradle JVM 内执行，避免另起 Kotlin daemon 叠加内存。
+- Lint 独立 JVM 的最大堆为 **512 MiB**，由 `android.experimental.lint.heapSize=512m` 限制。编译、单元测试、Lint、R8 优化应拆成不同的串行 Gradle 调用，避免单次 JVM 累积过多编译器与分析器状态。
 - Gradle JVM 的最大堆为 **1536 MiB**，Metaspace 为 **384 MiB**，代码缓存为 **128 MiB**，直接内存为 **256 MiB**；使用 `-XX:ActiveProcessorCount=2` 限制内部线程扩张。
 - 不得为解决 OOM 自行提高这些上限、开启并行或额外启动 daemon。先缩小任务范围、清理已确认属于本项目的遗留构建进程；仍无法完成时，如实报告资源限制。
 
-当前 `gradle.properties` 中的堆和并行默认值更宽松，**不可直接照用**。所有实际构建均通过下面的命令行参数覆盖，包括 README 中的构建示例。
+`gradle.properties` 已包含相同的内存与并发限制。所有实际构建仍须显式使用下面的命令行参数，避免用户级配置覆盖项目默认值，包括 README 中的构建示例。
 
 ### 标准调用方式
 
@@ -23,7 +24,7 @@
   :core:test
 ```
 
-按需将最后的任务替换为 `:app:assembleDebug`、`:app:lintDebug` 或 `:app:assembleBenchmark`。多个任务也必须放在同一次串行调用中，或等待前一个进程退出后再执行。
+按需将最后的任务替换为 `:app:testDebugUnitTest`、`:app:assembleDebug`、`:app:lintDebug` 或 `:app:assembleBenchmark`。各阶段等待前一个进程退出后再执行，不要将完整验证链放入同一次 JVM。
 
 `--no-daemon` 在 JVM 参数不匹配时仍可能启动一次性的 Gradle JVM；这是允许的，但它必须在本次命令结束后退出，不能作为常驻 daemon 留存。
 

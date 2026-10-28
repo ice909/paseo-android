@@ -15,7 +15,9 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--adb", default="adb")
 parser.add_argument("--output", default="app/build/smoke")
 parser.add_argument("--reset", action="store_true")
+parser.add_argument("--deny-lan-once", action="store_true", help="On Android 17, deny the first LAN permission request, then retry and grant it")
 args = parser.parse_args()
+denied_lan_once = False
 output = Path(args.output)
 output.mkdir(parents=True, exist_ok=True)
 
@@ -30,6 +32,7 @@ def tree():
 
 
 def node(value, attribute="text", contains=False):
+    global denied_lan_once
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         try:
@@ -37,6 +40,21 @@ def node(value, attribute="text", contains=False):
         except (ET.ParseError, subprocess.CalledProcessError):
             time.sleep(.3)
             continue
+        if value == "已连接":
+            allow = next((n for n in nodes if n.attrib.get("resource-id", "").endswith("/permission_allow_button")), None)
+            if allow is not None:
+                if args.deny_lan_once and not denied_lan_once:
+                    deny = next(n for n in nodes if n.attrib.get("resource-id", "").endswith("/permission_deny_button"))
+                    tap(deny)
+                    denied_lan_once = True
+                    node("连接局域网主机需要", contains=True)
+                    print("lan-permission-denied: passed", flush=True)
+                    click("Testbox")
+                else:
+                    tap(allow)
+                    print("lan-permission-granted: passed", flush=True)
+                deadline = time.monotonic() + 15
+                continue
         for element in nodes:
             actual = element.attrib.get(attribute, "")
             if (value in actual) if contains else (actual == value):
@@ -144,4 +162,6 @@ click("归档会话")
 click("归档")
 node("工作区")
 screenshot("archived-session")
+if args.deny_lan_once and int(adb("shell", "getprop", "ro.build.version.sdk").strip()) >= 37:
+    assert denied_lan_once, "Android 17 LAN permission denial was not exercised"
 print("All Android UI smoke checks passed.", flush=True)
