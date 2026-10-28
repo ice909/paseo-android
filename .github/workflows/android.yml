@@ -1,0 +1,24 @@
+name: Android
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: |
+          ./gradlew --no-daemon --no-parallel --max-workers=1 \
+            -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            :core:test :app:lintDebug :app:assembleDebug :app:assembleBenchmark
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paseo-native-apk
+          path: app/build/outputs/apk/**/*.apk

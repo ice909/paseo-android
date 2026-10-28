@@ -1,0 +1,11 @@
+Paseo Native
+
+An independent Android client implemented in Kotlin and Jetpack Compose.
+It is not an official Paseo release.
+
+The Paseo protocol and client behavior are based on the Apache-2.0-licensed
+Paseo project: https://github.com/getpaseo/paseo
+Reference revision: abc97e0545bb92e43eb96027102d845657c0a2eb
+
+The upstream license is included in LICENSE. This implementation does not
+bundle the React Native client, JavaScript runtime, or upstream daemon.
