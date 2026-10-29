@@ -16,7 +16,7 @@ parser.add_argument("--adb", default="adb")
 parser.add_argument("--output", default="app/build/smoke")
 parser.add_argument("--reset", action="store_true")
 parser.add_argument("--deny-lan-once", action="store_true", help="On Android 17, deny the first LAN permission request, then retry and grant it")
-args = parser.parse_args()
+args = parser.parse_args() if __name__ == "__main__" else parser.parse_args([])
 denied_lan_once = False
 output = Path(args.output)
 output.mkdir(parents=True, exist_ok=True)
@@ -33,7 +33,8 @@ def tree():
 
 def node(value, attribute="text", contains=False):
     global denied_lan_once
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 20
+    opened_sidebar = False
     while time.monotonic() < deadline:
         try:
             nodes = list(tree().iter("node"))
@@ -49,12 +50,18 @@ def node(value, attribute="text", contains=False):
                     denied_lan_once = True
                     node("连接局域网主机需要", contains=True)
                     print("lan-permission-denied: passed", flush=True)
-                    click("Testbox")
+                    click("连接")
                 else:
                     tap(allow)
                     print("lan-permission-granted: passed", flush=True)
                 deadline = time.monotonic() + 15
                 continue
+            if not any(n.attrib.get("text") == "已连接" for n in nodes) and not opened_sidebar:
+                menu = next((n for n in nodes if n.attrib.get("content-desc") == "打开侧栏"), None)
+                if menu is not None:
+                    tap(menu)
+                    opened_sidebar = True
+                    continue
         for element in nodes:
             actual = element.attrib.get(attribute, "")
             if (value in actual) if contains else (actual == value):
@@ -72,6 +79,21 @@ def click(value, attribute="text"):
     tap(node(value, attribute))
 
 
+
+def click_revealed(value):
+    width, height = map(int, re.findall(r"(\d+)x(\d+)", adb("shell", "wm", "size").decode())[0])
+    for _ in range(5):
+        for element in tree().iter("node"):
+            if element.attrib.get("text") == value:
+                bounds = list(map(int, re.findall(r"\d+", element.attrib["bounds"])))
+                if bounds[2] > bounds[0] and bounds[3] > bounds[1]:
+                    tap(element)
+                    return
+        # Scroll the pending permission card above the composer.
+        adb("shell", "input", "swipe", str(int(width * .82)), str(int(height * .79)), str(int(width * .82)), str(int(height * .60)), "350")
+    raise AssertionError(f"Scrollable control not found: {value}")
+
+
 def fill(index, value):
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
@@ -85,6 +107,20 @@ def fill(index, value):
             pass
         time.sleep(.2)
     raise AssertionError(f"Editable field {index} not found")
+
+
+def hide_keyboard():
+    # Back also dismisses a dialog when the IME has not appeared yet. Wait for
+    # the tap/focus transition, and send Back only if the IME is actually shown.
+    time.sleep(.5)
+    status = adb("shell", "dumpsys", "input_method").decode()
+    if "mInputShown=true" in status:
+        adb("shell", "input", "keyevent", "4")
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if "mInputShown=true" not in adb("shell", "dumpsys", "input_method").decode():
+                break
+            time.sleep(.1)
 
 
 def screenshot(name):
@@ -104,64 +140,121 @@ def fill_labeled(label, value):
     raise AssertionError(f"Labeled field not found: {label}")
 
 
-if args.reset:
-    adb("shell", "pm", "clear", "sh.paseo.android")
-adb("shell", "am", "start", "-n", "sh.paseo.android/.MainActivity")
-click("添加主机")
-fill(0, "Testbox")
-fill(1, "10.0.2.2:6768")
-fill(2, "test")
-adb("shell", "input", "keyevent", "4")
-click("保存并连接")
-node("已连接")
-node("Review the native Android client")
-screenshot("sessions")
-click("Review the native Android client")
-node("Native client review")
-screenshot("chat")
-fill(0, "Check streaming")
-click("发送消息", "content-desc")
-node("Run a command?")
-screenshot("permission")
-click("拒绝")
-node("Permission result: deny")
-screenshot("stream-result")
-adb("shell", "input", "keyevent", "4")
-click("文件")
-node("README.md")
-click("README.md")
-node("# Paseo Native", contains=True)
-screenshot("file")
-click("编辑文件", "content-desc")
-fill(0, "SMOKE")
-click("保存文件")
-node("编辑文件", "content-desc")
-node("SMOKE", contains=True)
-screenshot("saved-file")
-click("改动")
-node('println("Paseo")')
-screenshot("diff")
-click("终端")
-node("/home/dev/paseo")
-screenshot("terminal")
-# Confirm encrypted host settings survive process death and reconnect.
-adb("shell", "am", "force-stop", "sh.paseo.android")
-adb("shell", "am", "start", "-n", "sh.paseo.android/.MainActivity")
-node("已连接")
-node("Review the native Android client")
-screenshot("restored-host")
-click("新会话", "content-desc")
-fill_labeled("会话名称（可选）", "Native smoke")
-adb("shell", "input", "keyevent", "4")
-click("创建会话")
-node("从一个任务开始")
-node("Native smoke")
-screenshot("created-session")
-click("会话选项", "content-desc")
-click("归档会话")
-click("归档")
-node("工作区")
-screenshot("archived-session")
-if args.deny_lan_once and int(adb("shell", "getprop", "ro.build.version.sdk").strip()) >= 37:
-    assert denied_lan_once, "Android 17 LAN permission denial was not exercised"
-print("All Android UI smoke checks passed.", flush=True)
+def main():
+    if args.reset:
+        adb("shell", "pm", "clear", "sh.paseo.android")
+    adb("shell", "am", "start", "-n", "sh.paseo.android/.MainActivity")
+    click("添加主机")
+    assert len([n for n in tree().iter("node") if n.attrib.get("class") == "android.widget.EditText"]) == 1
+    fill(0, "tcp://10.0.2.2:6768?password=test")
+    hide_keyboard()
+    click("连接")
+    node("已连接")
+    node("Native Android")
+    node("Empty project")
+    screenshot("workspace-sidebar")
+    click("Native Android")
+    node("Native client review")
+    screenshot("chat")
+    # Two agents share a workspace, but have independent timelines.
+    click("切换代理或终端", "content-desc")
+    click("Second agent")
+    node("Native client review")
+    screenshot("second-agent")
+    click("Sonnet (fixture)")
+    click("Opus (fixture)")
+    node("Opus (fixture)")
+    click("Default")
+    click("Plan")
+    node("Plan")
+    screenshot("agent-options")
+    fill(0, "Check streaming")
+    click("发送消息", "content-desc")
+    hide_keyboard()
+    node("Run a command?")
+    screenshot("permission")
+    click("拒绝")
+    node("Permission result: deny")
+    screenshot("stream-result")
+    fill(0, "Ask a question")
+    click("发送消息", "content-desc")
+    hide_keyboard()
+    node("Which language?")
+    tap(node("Kotlin", contains=True))
+    click_revealed("提交回答")
+    node("Question answer: Kotlin")
+    screenshot("question-answer")
+    click("打开文件和改动", "content-desc")
+    node('println("Paseo")')
+    screenshot("diff")
+    click("文件")
+    node("README.md")
+    click("README.md")
+    node("# Paseo Native", contains=True)
+    screenshot("file")
+    click("编辑文件", "content-desc")
+    fill(0, "SMOKE")
+    click("保存文件")
+    node("编辑文件", "content-desc")
+    node("SMOKE", contains=True)
+    screenshot("saved-file")
+    click("关闭文件面板", "content-desc")
+    click("切换代理或终端", "content-desc")
+    click("终端")
+    node("/home/dev/paseo", contains=True)
+    fill(0, "pwd")
+    click("执行命令", "content-desc")
+    node("[fixture] Command received", contains=True)
+    hide_keyboard()
+    screenshot("terminal")
+    click("关闭终端", "content-desc")
+    click("关闭")
+    node("还没有终端")
+    # Empty workspaces support browsing and terminals without a fabricated agent.
+    click("打开侧栏", "content-desc")
+    click("Empty workspace")
+    node("工作区已就绪")
+    click("打开文件和改动", "content-desc")
+    click("文件")
+    node("README.md")
+    screenshot("empty-workspace-files")
+    click("关闭文件面板", "content-desc")
+    # Confirm encrypted host settings survive process death and reconnect.
+    adb("shell", "am", "force-stop", "sh.paseo.android")
+    adb("shell", "am", "start", "-n", "sh.paseo.android/.MainActivity")
+    node("已连接")
+    node("Native Android")
+    screenshot("restored-host")
+    click("在 paseo 新建工作区", "content-desc")
+    fill_labeled("名称（可选）", "Native smoke")
+    hide_keyboard()
+    screenshot("new-workspace")
+    click("创建工作区", "content-desc")
+    node("从一个任务开始")
+    node("Native smoke")
+    screenshot("created-workspace")
+    click("切换代理或终端", "content-desc")
+    click("新建代理")
+    fill_labeled("名称（可选）", "Second smoke")
+    hide_keyboard()
+    click("创建代理", "content-desc")
+    node("Second smoke")
+    screenshot("created-agent")
+    click("工作区选项", "content-desc")
+    click("归档会话")
+    click("归档")
+    node("Native smoke")
+    click("工作区选项", "content-desc")
+    click("归档工作区")
+    click("归档")
+    click("打开侧栏", "content-desc")
+    node("Native Android")
+    assert not any(n.attrib.get("text") == "Native smoke" for n in tree().iter("node"))
+    screenshot("archived-workspace")
+    if args.deny_lan_once and int(adb("shell", "getprop", "ro.build.version.sdk").strip()) >= 37:
+        assert denied_lan_once, "Android 17 LAN permission denial was not exercised"
+    print("All Android UI smoke checks passed.", flush=True)
+
+
+if __name__ == "__main__":
+    main()

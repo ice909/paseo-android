@@ -2,25 +2,31 @@
 
 使用 **Kotlin + Jetpack Compose + Material 3** 实现的独立 Android 客户端，连接已有的 Paseo daemon。界面和网络层均为原生实现。Android 包名为 `sh.paseo.android`，可以与官方客户端共存。
 
-官方源码参考：相邻目录 `../paseo`，协议对照版本 `abc97e0545bb92e43eb96027102d845657c0a2eb`。这是原生实现的第一版，尚未与官方客户端完整对齐。
+官方源码参考：相邻目录 `../paseo`，协议对照版本 `abc97e0545bb92e43eb96027102d845657c0a2eb`。本轮先对齐官方移动端的工作区导航和基本任务流程；完整功能与像素级视觉对齐仍在进行。
 
 ## 已实现
 
-- 多主机配置、密码认证、局域网 / VPN / Tailscale 直连，支持 `ws`、`wss`、`tcp` 及直连配对链接。
+- 添加主机默认只需粘贴官方 `https://app.paseo.sh/#offer=…` 配对链接，主机名称从电脑自动读取；验证连接成功后才保存，主机要求密码时才显示密码输入框。
+- 官方加密中继配对（`#offer=`、`relay://`、`#connect=`），支持 Noise NK protected 模式及旧版 NaCl 通道；校验配对公钥并拒绝不满足要求的降级连接。密码不进入中继 URL 或 HTTP 请求头。
+- 多主机配置、密码认证、局域网 / VPN / Tailscale 直连；「更多选项」保留手动地址与可选自定义名称。
 - 使用 Android Keystore 加密保存主机配置，进程重启后恢复连接，连接中断后指数退避重连。
-- 会话列表、项目目录分组、搜索与状态筛选、分页、新建会话、提供方及模型选择、重命名和归档。
-- 历史消息分页、实时输出、工具调用及结果、思考过程、任务清单、权限允许 / 拒绝、停止执行。
+- 官方 Zinc 灰阶深浅色布局：项目 / 工作区侧栏、主机状态、移动端代理选择器、底部配置与消息输入、独立文件 / 改动面板。
+- 真实工作区目录订阅、分页、已加载工作区搜索、空项目 / 空工作区、工作区重命名、置顶和归档。
+- 在已有目录或从当前分支新建 Git worktree，连同首个代理和初始任务一起创建；已有工作区可追加多个代理。
+- 提供方 / 模型 / 模式选择，已有代理的模型和模式切换，斜杠命令建议。
+- 使用创建请求幂等键和创建状态回执；同一草稿重试保留键，编辑配置后生成新键。现代创建协议用于支持 `creationLifecycle` 的 daemon，旧版提供基本创建兼容路径。
+- 历史消息分页、实时输出、工具调用及结果、思考过程、任务清单、权限允许 / 拒绝、交互式单选 / 多选 / 文本提问、停止执行。
 - 原生 Markdown 基础排版、可选择文本、可复制代码块。
 - 目录浏览、UTF-8 文本查看与编辑，使用主机文件版本进行并发修改检查。
 - 未提交 Git diff 查看。
-- 文本模式终端：选择 / 创建终端、发送命令、Ctrl+C / Esc / Tab / Enter、每秒抓取最近 300 行。
+- 文本模式终端：选择 / 创建 / 关闭终端、发送命令、Ctrl+C / Esc / Tab / Enter、每秒抓取最近 300 行。
 - 系统深浅色主题、系统返回、键盘避让。
 
 ## 当前边界
 
-中继 E2EE / 中继二维码配对、推送通知、语音、附件、交互式问题表单、完整 VT 终端、插件 UI、工作树和 PR 管理尚未实现。`relay://` 链接会明确提示使用直连地址。Markdown 暂不解析完整表格、图片和数学公式。
+二维码扫描、推送通知、语音、附件、完整 VT 终端、插件 UI、归档历史入口、日程、完整工作树与 PR 管理尚未实现。工作树目前仅支持从当前分支创建；Git 改动面板目前仅展示未提交改动。Markdown 暂不解析完整表格、图片和数学公式。
 
-协议根据上述官方源码版本实现；没有用户真实主机的连接信息，因此当前验证使用协议模拟服务器。不同版本 daemon 的兼容性、真实代理执行和低端设备性能仍需实机验证。原生技术栈本身不构成性能保证。
+协议根据上述官方源码版本实现。已使用隔离的官方 daemon 0.13.2 及其真实 `#offer=` 链接，经公共中继验证原生 Kotlin 网络层的工作区读取、文件读写与终端操作；聊天流、审批、提问和界面流程使用协议模拟服务验证。尚未使用用户真实 AI 代理执行任务；不同 daemon 版本兼容性和低端设备性能仍需实机验证。
 
 ## 构建
 
@@ -31,7 +37,8 @@
 
 ```sh
 run_gradle() {
-  ./gradlew --no-daemon --no-parallel --max-workers=1 \
+  systemd-run --user --scope -p MemoryMax=3G -p MemorySwapMax=0 -- \
+    ./gradlew --no-daemon --no-parallel --max-workers=1 \
     -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
     -Pkotlin.compiler.execution.strategy=in-process "$@"
 }
@@ -40,6 +47,8 @@ run_gradle :app:testDebugUnitTest
 run_gradle :app:assembleDebug
 run_gradle :app:lintDebug
 ```
+
+上述命令使用用户级 systemd 作用域限制整个构建及子进程总内存为 3 GiB，并禁止使用 swap。没有用户级 systemd 的环境按 AGENTS.md 保留 JVM 上限、单 worker 和串行构建，并监控总内存。
 
 安装：
 
@@ -50,7 +59,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 测试流畅度使用开启 R8 的优化构建：
 
 ```sh
-./gradlew --no-daemon --no-parallel --max-workers=1 \
+systemd-run --user --scope -p MemoryMax=3G -p MemorySwapMax=0 -- \
+  ./gradlew --no-daemon --no-parallel --max-workers=1 \
   -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
   -Pkotlin.compiler.execution.strategy=in-process \
   :app:assembleBenchmark
@@ -75,6 +85,7 @@ adb install -r app/build/outputs/apk/benchmark/app-benchmark.apk
 | Activity / Lifecycle | 1.13.0 / 2.11.0 |
 | Coroutines / Serialization | 1.11.0 / 1.12.0 |
 | OkHttp / MockWebServer | 5.5.1 / 5.5.1 |
+| Bouncy Castle 原语库 | 1.86（用于 X25519、ChaChaPoly、NaCl 兼容通道，不替换 Android 的系统 provider） |
 | Material Icons / JUnit 4 | 1.7.8 / 4.13.2（这两个 artifact 的最新稳定版） |
 
 项目默认关闭 Gradle daemon 和项目并行，限制一个 worker，并使用 Kotlin 进程内编译；Lint JVM 堆限制为 512 MiB，各验证阶段使用独立的串行调用；详细资源限制见 [AGENTS.md](AGENTS.md)。
@@ -85,7 +96,9 @@ adb install -r app/build/outputs/apk/benchmark/app-benchmark.apk
 
 在主机启动 Paseo，确认 daemon 的监听地址能被手机访问。Android 17 及以上在连接局域网主机时会请求「附近设备」权限；拒绝后可再次点击主机重试。公网主机和本机回环地址无需该权限。`ws://` 直连通过 Network Security Configuration 保持兼容。
 
-在应用中添加主机，例如 `192.168.1.10:6767` 或 `wss://paseo.example.com/ws`；如主机设置了密码，一并填写。新会话的工作目录指主机上的绝对路径。手机和主机可通过同一局域网或 VPN 互通。
+推荐在电脑的 Paseo 中选择「配对设备」，或运行 `paseo daemon pair` 复制官方链接。在手机点击「添加主机」，粘贴链接后点「连接」。不需要填写主机名称；名称由主机提供。如 daemon 要求密码，应用收到认证提示后才显示密码输入框。
+
+也可在「更多选项 → 手动输入地址」中使用 `192.168.1.10:6767` 或 `wss://paseo.example.com/ws`，并按需填写密码。新工作区的目录指主机上的绝对路径。连接后打开左上角侧栏选择已有工作区，或选择「新建工作区」。工作区内点击代理名称切换代理 / 终端；右上角按钮打开改动 / 文件面板。手机和主机可通过同一局域网或 VPN 互通。
 
 Android 模拟器访问开发机使用 `10.0.2.2`；也可执行 `adb reverse tcp:6767 tcp:6767` 后连接 `127.0.0.1:6767`。
 
@@ -103,7 +116,8 @@ tools/   本地模拟 daemon 和 Android UI smoke 脚本
 
 ```sh
 run_gradle() {
-  ./gradlew --no-daemon --no-parallel --max-workers=1 \
+  systemd-run --user --scope -p MemoryMax=3G -p MemorySwapMax=0 -- \
+    ./gradlew --no-daemon --no-parallel --max-workers=1 \
     -Dorg.gradle.jvmargs='-Xmx1536m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8' \
     -Pkotlin.compiler.execution.strategy=in-process "$@"
 }
@@ -113,7 +127,7 @@ run_gradle :app:assembleDebug
 run_gradle :app:lintDebug
 ```
 
-单元测试还覆盖局域网、VPN、公网与回环地址的权限分类。协议测试包含地址与密码解析、认证拒绝、RPC 错误、历史和实时事件重叠、工具生命周期、长流式消息、会话加载与权限响应。
+单元测试覆盖地址与密码解析、局域网权限分类、认证拒绝、RPC 错误、历史和实时事件重叠、工具生命周期、长流式消息、权限响应、工作区目录更新、创建状态回执、失败后的工作区保留、多代理归属、提问答案格式、官方配对链接解析、Noise 标准向量、NaCl 互通、分块认证、重放拒绝和降级拒绝。
 
 无需真实代理的 UI 验证（使用专用模拟器）：
 
@@ -123,7 +137,31 @@ python3 tools/mock_daemon.py --port 6768
 python3 tools/android_smoke.py --reset --deny-lan-once
 ```
 
+脚本覆盖主机恢复、局域网权限拒绝后重试、侧栏、多代理切换、聊天流、工具审批、提问、文件编辑、改动、终端、空工作区、创建工作区 / 代理与归档。
+
 `--reset` 会清除模拟器中本应用的数据。模拟主机密码为 `test`，不执行真实 shell 命令。截图输出在 `app/build/smoke/`。
+
+官方加密库互通与 Android 配对 UI 回归可用下列工具（需要已安装官方 Paseo CLI，使用其依赖，不启动真实 AI）：
+
+```sh
+node tools/relay_pairing_fixture.mjs /tmp/paseo-relay-fixture.json 6770
+# 另一终端，在模拟器停止时执行；测试构建遵循上述内存限制
+PASEO_RELAY_FIXTURE_FILE=/tmp/paseo-relay-fixture.json run_gradle :core:test
+# 编译完成后启动专用模拟器并安装 APK，再执行
+python3 tools/android_pairing_smoke.py --fixture /tmp/paseo-relay-fixture.json
+```
+
+配对 UI 测试覆盖仅一个链接输入框、无效链接不落盘、按需询问密码、错误密码重试、自动主机名、加密文件请求和重启恢复。
+
+真实协议集成测试为手动启用：在独立的临时 daemon home 中创建名为 `Real daemon workspace` 的无代理工作区，目录内放置含 `Native integration` 的 `README.md`。启动 daemon 时设置 `PASEO_DICTATION_ENABLED=false PASEO_VOICE_MODE_ENABLED=false PASEO_RELAY_ENABLED=false`，避免测试实例启动语音模型或中继。然后运行：
+
+```sh
+PASEO_SMOKE_URL=ws://127.0.0.1:6769/ws run_gradle :core:test --tests '*RealDaemonIntegrationTest'
+```
+
+此测试会修改测试目录的 README 并创建 / 关闭一个真实终端，只连接专用的临时测试实例；还可用 `PASEO_SMOKE_LINK_FILE` 指向官方配对链接文件、`PASEO_SMOKE_PASSWORD_FILE` 指向测试密码文件，验证经过真实中继的同一流程。未设置变量时跳过。构建与模拟器验证串行进行，资源限制遵循 AGENTS.md。
+
+界面和协议映射见 [docs/official-alignment.md](docs/official-alignment.md)。
 
 ## 参考
 

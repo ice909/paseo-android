@@ -18,6 +18,8 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     private var publishJob: Job? = null
     private var timelineSubscription: String? = null
     private var catalogSubscription: String? = null
+    private var workspaceSubscription: String? = null
+    private var creationLifecycle = false
 
     init { scope.launch { socket.messages.collect { message ->
         try { handle(message) } catch (error: Exception) { report(error) }
@@ -29,18 +31,26 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         timelineJob?.cancel()
         publishJob?.cancel()
         connectionJob = scope.launch {
-            val selected = if (state.value.host?.id == host.id) state.value.selectedAgentId else null
+            val sameHost = state.value.host?.id == host.id
+            val selected = state.value.selectedAgentId.takeIf { sameHost }
+            val workspace = state.value.selectedWorkspaceId.takeIf { sameHost }
             buffer.clear()
-            _state.value = PaseoState(host = host, selectedAgentId = selected, connection = ConnectionStatus.Connecting)
+            _state.value = PaseoState(host = host, selectedAgentId = selected, selectedWorkspaceId = workspace, connection = ConnectionStatus.Connecting)
             var attempt = 0
             while (isActive) {
                 try {
                     catalogSubscription = null
                     timelineSubscription = null
+                    workspaceSubscription = null
                     val info = socket.open(host)
+                    creationLifecycle = info.obj("features").bool("creationLifecycle")
                     _state.update { it.copy(connection = ConnectionStatus.Connected, serverName = info.string("hostname").ifBlank { host.name }, error = null) }
                     coroutineScope {
-                        launch { fetchAgents(subscribe = true) }
+                        launch {
+                            fetchAgents(subscribe = true)
+                            while (state.value.nextAgentCursor != null) fetchAgents(cursor = state.value.nextAgentCursor)
+                        }
+                        launch { fetchWorkspaces(subscribe = true) }
                         launch {
                             val result = socket.request("list_available_providers_request")
                             val providers = result.array("providers").map { wireJson.decodeFromJsonElement<Provider>(it) }
@@ -79,6 +89,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
 
     suspend fun refreshAgents(loadMore: Boolean = false) = withContext(dispatcher) {
         fetchAgents(cursor = if (loadMore) state.value.nextAgentCursor else null)
+        if (!loadMore) while (state.value.nextAgentCursor != null) fetchAgents(cursor = state.value.nextAgentCursor)
     }
     private suspend fun fetchAgents(subscribe: Boolean = false, cursor: String? = null) {
         val result = socket.request("fetch_agents_request",
@@ -92,6 +103,44 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             agents = ((if (cursor != null) current.agents else emptyList()) + agents).distinctBy { it.id }.filter { it.archivedAt == null },
             nextAgentCursor = result.obj("pageInfo").string("nextCursor").ifBlank { null },
         ) }
+    }
+
+    suspend fun refreshWorkspaces(loadMore: Boolean = false) = withContext(dispatcher) {
+        fetchWorkspaces(cursor = if (loadMore) state.value.nextWorkspaceCursor else null)
+    }
+    private suspend fun fetchWorkspaces(subscribe: Boolean = false, cursor: String? = null) {
+        val result = socket.request("fetch_workspaces_request",
+            "page" to jsonObject("limit" to 200, "cursor" to cursor),
+            "sort" to listOf(jsonObject("key" to "activity_at", "direction" to "desc")),
+            "subscribe" to if (subscribe) jsonObject() else null)
+        if (subscribe) workspaceSubscription = result.string("subscriptionId").ifBlank { null }
+        val workspaces = result.array("entries").map { wireJson.decodeFromJsonElement<Workspace>(it) }
+        _state.update { current -> current.copy(
+            workspaces = ((if (cursor != null) current.workspaces else emptyList()) + workspaces).distinctBy { it.id },
+            emptyProjects = if (cursor == null) result.array("emptyProjects").map { wireJson.decodeFromJsonElement<Project>(it) } else current.emptyProjects,
+            nextWorkspaceCursor = result.obj("pageInfo").string("nextCursor").ifBlank { null }, catalogLoaded = true) }
+    }
+    fun openWorkspace(workspace: Workspace) {
+        _state.update { it.copy(selectedWorkspaceId = workspace.id) }
+        val agent = state.value.agents.firstOrNull { workspace.contains(it) }
+        if (agent != null) selectAgent(agent.id) else leaveAgent()
+    }
+    private fun upsertWorkspace(workspace: Workspace) {
+        _state.update { it.copy(workspaces = (it.workspaces.filterNot { w -> w.id == workspace.id } + workspace)
+            .sortedWith(compareByDescending<Workspace> { it.pinnedAt != null }.thenByDescending { it.activityAt }),
+            emptyProjects = it.emptyProjects.filterNot { p -> p.projectId == workspace.projectId }) }
+    }
+    suspend fun renameWorkspace(id: String, title: String) {
+        socket.request("workspace.title.set.request", "workspaceId" to id, "title" to title)
+    }
+    suspend fun pinWorkspace(id: String, pinned: Boolean) {
+        socket.request("workspace.pin.set.request", "workspaceId" to id, "pinned" to pinned)
+    }
+    suspend fun archiveWorkspace(id: String) = withContext(dispatcher) {
+        socket.request("archive_workspace_request", "workspaceId" to id)
+        if (state.value.selectedWorkspaceId == id) leaveAgent()
+        _state.update { it.copy(workspaces = it.workspaces.filterNot { w -> w.id == id },
+            selectedWorkspaceId = it.selectedWorkspaceId.takeUnless { selected -> selected == id }) }
     }
 
     fun selectAgent(agentId: String) {
@@ -145,18 +194,69 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         } finally { _state.update { it.copy(loadingTimeline = false) } }
     }
 
-    suspend fun createAgent(provider: String, cwd: String, model: String, prompt: String, title: String): Agent = withContext(dispatcher) {
-        require(provider.isNotBlank() && cwd.startsWith('/')) { "请选择提供方并填写主机上的绝对目录" }
-        val result = socket.request("create_agent_request",
-            "config" to jsonObject("provider" to provider, "cwd" to cwd, "model" to model.ifBlank { null }, "title" to title.ifBlank { null }),
-            "initialPrompt" to prompt.ifBlank { null }, "clientMessageId" to newId(),
-        )
-        if (result.string("status") == "agent_create_failed") throw IOException(result.string("error"))
-        val agent = wireJson.decodeFromJsonElement<Agent>(result.getValue("agent"))
+    /** Callers retain the key with their draft: a lost receipt can be retried without duplicate resources. */
+    suspend fun createWorkspace(provider: String, cwd: String, model: String, mode: String, prompt: String,
+        title: String, key: String, projectId: String? = null, worktree: Boolean = false, branch: String = ""): Workspace = withContext(dispatcher) {
+        val agent = creationAgent(provider, cwd, model, mode, prompt, title)
+        val source = if (worktree) jsonObject("kind" to "worktree", "cwd" to cwd, "projectId" to projectId,
+            "action" to "branch-off", "branchName" to branch.ifBlank { null })
+            else jsonObject("kind" to "directory", "path" to cwd, "projectId" to projectId)
+        val result = socket.request("workspace.create.request", "source" to source,
+            "agent" to if (creationLifecycle) agent else null, "title" to title.ifBlank { null },
+            "idempotencyKey" to if (creationLifecycle) key else null, "subscribe" to false)
+        val complete = finishCreation("workspace", key, result)
+        val workspace = wireJson.decodeFromJsonElement<Workspace>(complete["workspace"] ?: throw IOException("主机未返回工作区"))
+        upsertWorkspace(workspace)
+        _state.update { it.copy(selectedWorkspaceId = workspace.id) }
+        if (creationLifecycle) {
+            complete["agent"]?.takeIf { it is JsonObject }?.let { upsert(wireJson.decodeFromJsonElement<Agent>(it)); selectAgent(it.jsonObject.string("id")) }
+        } else createAgent(workspace, provider, model, mode, prompt, title, "$key:agent")
+        workspace
+    }
+    suspend fun createAgent(workspace: Workspace, provider: String, model: String, mode: String,
+        prompt: String, title: String, key: String): Agent = withContext(dispatcher) {
+        val fields = creationAgent(provider, workspace.cwd, model, mode, prompt, title)
+        val result = socket.request(if (creationLifecycle) "agent.create.request" else "create_agent_request",
+            "config" to fields["config"], "workspaceId" to workspace.id, "initialPrompt" to fields["initialPrompt"],
+            "clientMessageId" to key, "idempotencyKey" to if (creationLifecycle) key else null, "subscribe" to false)
+        val complete = finishCreation("agent", key, result)
+        val agent = wireJson.decodeFromJsonElement<Agent>(complete["agent"] ?: throw IOException("主机未返回代理"))
         upsert(agent)
+        _state.update { it.copy(selectedWorkspaceId = workspace.id) }
         selectAgent(agent.id)
         agent
     }
+    private fun creationAgent(provider: String, cwd: String, model: String, mode: String, prompt: String, title: String): JsonObject {
+        require(provider.isNotBlank() && cwd.startsWith('/')) { "请选择代理并填写主机上的绝对目录" }
+        return jsonObject("config" to jsonObject("provider" to provider, "cwd" to cwd,
+            "model" to model.ifBlank { null }, "modeId" to mode.ifBlank { null }, "title" to title.ifBlank { null }),
+            "initialPrompt" to prompt.ifBlank { null })
+    }
+    private suspend fun finishCreation(kind: String, key: String, receipt: JsonObject): JsonObject {
+        var snapshot = receipt.obj("creation")
+        if (snapshot.isEmpty()) return receipt
+        // Recovery is read-only; never submit a second create after a timeout.
+        return withTimeout(120_000) {
+            while (snapshot.string("phase") !in setOf("completed", "failed")) {
+                delay(300)
+                snapshot = socket.request("creation.subscribe.request", "kind" to kind, "idempotencyKey" to key,
+                    "subscribe" to false).obj("snapshot")
+                if (snapshot.isEmpty()) throw IOException("无法恢复创建状态，请刷新工作区后重试")
+            }
+            if (snapshot.string("phase") == "failed") {
+                snapshot["workspace"]?.takeIf { it is JsonObject }?.let { upsertWorkspace(wireJson.decodeFromJsonElement<Workspace>(it)) }
+                throw IOException(snapshot.string("error").ifBlank { "创建失败" })
+            }
+            snapshot
+        }
+    }
+    suspend fun modes(provider: String, cwd: String): List<ModeOption> = socket.request("list_provider_modes_request",
+        "provider" to provider, "cwd" to cwd.ifBlank { null }).array("modes").map { wireJson.decodeFromJsonElement<ModeOption>(it) }
+    suspend fun setModel(id: String, model: String) { socket.request("set_agent_model_request", "agentId" to id, "modelId" to model) }
+    suspend fun setMode(id: String, mode: String) { socket.request("set_agent_mode_request", "agentId" to id, "modeId" to mode) }
+    suspend fun commands(id: String): List<JsonObject> = socket.request("list_commands_request", "agentId" to id).array("commands").map { it.jsonObject }
+    suspend fun directorySuggestions(query: String): List<JsonObject> = socket.request("directory_suggestions_request",
+        "query" to query, "includeDirectories" to true, "includeFiles" to false, "limit" to 8).array("entries").map { it.jsonObject }
     suspend fun models(provider: String, cwd: String): List<ModelOption> {
         val result = socket.request("list_provider_models_request", "provider" to provider, "cwd" to cwd.ifBlank { null })
         return result.array("models").map { wireJson.decodeFromJsonElement<ModelOption>(it) }
@@ -174,10 +274,10 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     suspend fun renameAgent(agentId: String, name: String) {
         socket.request("update_agent_request", "agentId" to agentId, "name" to name)
     }
-    suspend fun respondToPermission(agentId: String, request: PermissionRequest, behavior: String, actionId: String? = null) {
+    suspend fun respondToPermission(agentId: String, request: PermissionRequest, behavior: String, actionId: String? = null, updatedInput: JsonObject? = null) {
         // The permission ID is the correlation ID; this message has no separate RPC receipt.
         socket.send("agent_permission_response", "agentId" to agentId, "requestId" to request.id,
-            "response" to jsonObject("behavior" to behavior, "selectedActionId" to actionId))
+            "response" to jsonObject("behavior" to behavior, "selectedActionId" to actionId, "updatedInput" to updatedInput))
     }
     suspend fun files(cwd: String, path: String = "", file: Boolean = false): JsonObject = socket.request(
         "file_explorer_request", "cwd" to cwd, "path" to path, "mode" to if (file) "file" else "list", "maxBytes" to 1_048_576,
@@ -193,10 +293,11 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         return status
     }
     suspend fun diff(cwd: String): JsonObject = socket.request("checkout.diff.get.request", "cwd" to cwd, "compare" to jsonObject("mode" to "uncommitted"))
-    suspend fun terminals(agent: Agent): List<JsonObject> = socket.request("list_terminals_request", "cwd" to agent.cwd,
-        "workspaceId" to agent.workspaceId).array("terminals").map { it.jsonObject }
-    suspend fun createTerminal(agent: Agent): JsonObject = socket.request("create_terminal_request", "cwd" to agent.cwd,
-        "workspaceId" to agent.workspaceId, "name" to "Android").obj("terminal")
+    suspend fun terminals(agent: WorkspaceContext): List<JsonObject> = socket.request("list_terminals_request", "cwd" to agent.cwd,
+        "workspaceId" to agent.id).array("terminals").map { it.jsonObject }
+    suspend fun createTerminal(agent: WorkspaceContext): JsonObject = socket.request("create_terminal_request", "cwd" to agent.cwd,
+        "workspaceId" to agent.id, "name" to "Android").obj("terminal")
+    suspend fun closeTerminal(id: String) { socket.request("kill_terminal_request", "terminalId" to id) }
     suspend fun captureTerminal(id: String): String = socket.request("capture_terminal_request", "terminalId" to id,
         "start" to -300, "stripAnsi" to true).array("lines").joinToString("\n") { it.jsonPrimitive.content }
     fun terminalInput(id: String, data: String) = socket.send("terminal_input", "terminalId" to id, "message" to jsonObject("type" to "input", "data" to data))
@@ -215,8 +316,21 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         val payload = message.obj("payload")
         val agentId = payload.string("agentId")
         when (message.string("type")) {
+            "workspace_update" -> if (payload.string("kind") == "upsert") upsertWorkspace(wireJson.decodeFromJsonElement<Workspace>(payload.obj("workspace")))
+                else {
+                    val id = payload.string("id")
+                    if (state.value.selectedWorkspaceId == id) leaveAgent()
+                    _state.update { current -> current.copy(workspaces = current.workspaces.filterNot { it.id == id || it.projectId == payload.string("removedProjectId") },
+                        selectedWorkspaceId = current.selectedWorkspaceId.takeUnless { it == id },
+                        emptyProjects = (current.emptyProjects.filterNot { it.projectId == payload.string("removedProjectId") } +
+                            listOfNotNull(payload["emptyProject"]?.takeIf { it is JsonObject }?.let { wireJson.decodeFromJsonElement<Project>(it) })).distinctBy { it.projectId }) }
+                }
             "agent_update" -> if (payload.string("kind") == "upsert") upsert(wireJson.decodeFromJsonElement<Agent>(payload.obj("agent")))
-                else _state.update { it.copy(agents = it.agents.filterNot { agent -> agent.id == agentId }) }
+                else {
+                    val removed = agentId.ifBlank { payload.string("id") }
+                    if (state.value.selectedAgentId == removed) leaveAgent()
+                    _state.update { it.copy(agents = it.agents.filterNot { agent -> agent.id == removed }) }
+                }
             "agent_status" -> upsert(wireJson.decodeFromJsonElement<Agent>(payload.obj("info")))
             "agent_permission_request" -> permission(agentId, wireJson.decodeFromJsonElement<PermissionRequest>(payload.obj("request")))
             "agent_permission_resolved" -> permission(agentId, null, payload.string("requestId"))

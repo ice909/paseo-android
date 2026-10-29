@@ -13,15 +13,18 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.*
 import okhttp3.*
+import okio.ByteString
 
-class AuthenticationException(message: String) : IOException(message)
+enum class AuthFailure { PasswordRequired, IncorrectPassword, Incompatible, Security }
+open class AuthenticationException(message: String, val reason: AuthFailure = AuthFailure.Incompatible) : IOException(message)
 
-/** Wire transport only. Callers own reconnect policy and subscription restoration. */
+/** Direct and official relay transports share the same authenticated daemon session protocol. */
 class DaemonSocket(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(25, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).build(),
 ) {
     private val generation = AtomicLong()
+    private val outbound = Any()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
     private val incoming = Channel<Pair<Long, JsonObject>>(Channel.UNLIMITED)
@@ -29,6 +32,8 @@ class DaemonSocket(
     private val _connected = MutableStateFlow(false)
     val connected = _connected.asStateFlow()
     private var socket: WebSocket? = null
+    private var secure: RelayChannel? = null
+    private var retryHandshake: Job? = null
     private var handshake: CompletableDeferred<JsonObject>? = null
 
     suspend fun open(host: Host): JsonObject {
@@ -37,88 +42,124 @@ class DaemonSocket(
         val ready = CompletableDeferred<JsonObject>()
         handshake = ready
         val request = Request.Builder().url(host.url).apply {
-            // Compatibility with daemons that authenticate during the HTTP upgrade.
-            if (host.password.matches(Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]+")))
+            // A relay receives routing only. Passwords travel inside the encrypted hello.
+            if (host.relay == null && host.password.matches(Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]+")))
                 header("Authorization", "Bearer ${host.password}")
         }.build()
+        val channel = try { host.relay?.let(::RelayChannel) }
+            catch (_: Exception) { throw AuthenticationException("配对公钥无法验证，请从电脑重新复制链接", AuthFailure.Security) }
+        secure = channel
+        fun transmit(peer: WebSocket, text: String) = synchronized(outbound) {
+            if (attempt != generation.get()) return@synchronized
+            check(peer.send(channel?.encrypt(text) ?: text)) { "连接已断开" }
+        }
+        fun hello(peer: WebSocket) = transmit(peer, jsonObject(
+            "type" to "hello", "clientId" to "paseo-android-${newId()}",
+            "clientType" to "mobile", "protocolVersion" to 1, "appVersion" to "0.2.0",
+            "capabilities" to jsonObject("hello_rejection" to true, "all_providers" to true,
+                "owned_subscriptions" to true, "selective_agent_timeline" to true,
+                "timeline_replacement_invalidation" to true, "timeline_notifications" to true),
+            "auth" to host.password.takeIf { it.isNotEmpty() }?.let { jsonObject("kind" to "password", "password" to it) },
+        ).toString())
+        fun failAttempt(error: Exception) = synchronized(outbound) {
+            if (attempt == generation.get()) fail(error)
+        }
+        fun protocol(peer: WebSocket, text: String) = synchronized(outbound) {
+            if (attempt != generation.get()) return@synchronized
+            val frame = wireJson.parseToJsonElement(text).jsonObject
+            when (frame.string("type")) {
+                "ping" -> transmit(peer, jsonObject("type" to "pong").toString())
+                "hello.rejected" -> {
+                    val error = when (frame.string("reason")) {
+                        "password_required" -> AuthenticationException("主机需要密码", AuthFailure.PasswordRequired)
+                        "incorrect_password" -> AuthenticationException("主机密码不正确", AuthFailure.IncorrectPassword)
+                        else -> AuthenticationException("客户端与主机协议不兼容")
+                    }
+                    fail(error); peer.close(1000, "Authentication failed")
+                }
+                "session" -> {
+                    val message = frame.obj("message")
+                    val payload = message.obj("payload")
+                    if (message.string("type") == "status" && payload.string("status") == "server_info") {
+                        if (channel != null && !channel.protected && payload.obj("features").bool("relayProtectedSecurity")) {
+                            throw AuthenticationException("中继连接未通过安全校验，请重新复制配对链接", AuthFailure.Security)
+                        }
+                        _connected.value = true; ready.complete(payload)
+                    }
+                    val requestId = payload.string("requestId")
+                    pending.remove(requestId)?.let { deferred ->
+                        val error = payload["error"]
+                        when {
+                            message.string("type") == "rpc_error" -> deferred.completeExceptionally(IOException(payload.string("error")))
+                            error is JsonPrimitive && error.contentOrNull != null -> deferred.completeExceptionally(IOException(error.content))
+                            error is JsonObject -> deferred.completeExceptionally(IOException(error.string("message").ifBlank { error.toString() }))
+                            payload["accepted"] == JsonPrimitive(false) -> deferred.completeExceptionally(IOException("主机拒绝了操作"))
+                            else -> deferred.complete(payload)
+                        }
+                    }
+                    incoming.trySend(attempt to message)
+                }
+            }
+        }
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (attempt != generation.get()) { webSocket.cancel(); return }
-                webSocket.send(jsonObject(
-                    "type" to "hello", "clientId" to "paseo-android-${newId()}",
-                    "clientType" to "mobile", "protocolVersion" to 1, "appVersion" to "0.1.0",
-                    "capabilities" to jsonObject(
-                        "hello_rejection" to true, "all_providers" to true,
-                        "owned_subscriptions" to true, "selective_agent_timeline" to true,
-                        "timeline_replacement_invalidation" to true, "timeline_notifications" to true,
-                    ),
-                    "auth" to host.password.takeIf { it.isNotEmpty() }?.let {
-                        jsonObject("kind" to "password", "password" to it)
-                    },
-                ).toString())
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                if (attempt != generation.get()) return
                 try {
-                    val frame = wireJson.parseToJsonElement(text).jsonObject
-                    when (frame.string("type")) {
-                        "ping" -> webSocket.send(jsonObject("type" to "pong").toString())
-                        "hello.rejected" -> {
-                            val reason = when (frame.string("reason")) {
-                                "password_required" -> "主机需要密码"
-                                "incorrect_password" -> "主机密码不正确"
-                                else -> "客户端与主机协议不兼容"
-                            }
-                            fail(AuthenticationException(reason))
-                            webSocket.close(1000, "Authentication failed")
-                        }
-                        "session" -> {
-                            val message = frame.obj("message")
-                            val payload = message.obj("payload")
-                            if (message.string("type") == "status" && payload.string("status") == "server_info") {
-                                _connected.value = true
-                                ready.complete(payload)
-                            }
-                            val requestId = payload.string("requestId")
-                            pending.remove(requestId)?.let { deferred ->
-                                val error = payload["error"]
-                                when {
-                                    message.string("type") == "rpc_error" -> deferred.completeExceptionally(IOException(payload.string("error")))
-                                    error is JsonPrimitive && error.contentOrNull != null -> deferred.completeExceptionally(IOException(error.content))
-                                    error is JsonObject -> deferred.completeExceptionally(IOException(error.string("message").ifBlank { error.toString() }))
-                                    payload["accepted"] == JsonPrimitive(false) -> deferred.completeExceptionally(IOException("主机拒绝了操作"))
-                                    else -> deferred.complete(payload)
+                    if (channel == null) hello(webSocket) else {
+                        webSocket.send(channel.hello())
+                        retryHandshake = cleanupScope.launch {
+                            while (isActive) {
+                                delay(1_000)
+                                if (attempt != generation.get() || channel.open) return@launch
+                                synchronized(outbound) {
+                                    if (attempt == generation.get() && !channel.open) webSocket.send(channel.hello())
                                 }
                             }
-                            incoming.trySend(attempt to message)
                         }
                     }
-                } catch (error: Exception) {
-                    fail(IOException("无法解析主机协议消息", error))
-                    webSocket.close(1002, "Invalid protocol message")
+                } catch (e: Exception) { failAttempt(e); webSocket.close(4002, "Handshake failed") }
+            }
+            private fun receive(peer: WebSocket, text: String?, bytes: ByteArray?) {
+                if (attempt != generation.get()) return
+                try {
+                    if (channel == null) { if (text != null) protocol(peer, text); return }
+                    when (val result = channel.receive(text, bytes)) {
+                        RelayResult.Ready -> { retryHandshake?.cancel(); hello(peer) }
+                        RelayResult.Ignore -> Unit
+                        is RelayResult.Frame -> if (!result.frame.binary) protocol(peer, strictUtf8(result.frame.data))
+                    }
+                } catch (e: Exception) {
+                    val error = if (e is AuthenticationException) e else if (channel != null)
+                        AuthenticationException("配对连接校验失败，请从电脑重新复制配对链接", AuthFailure.Security)
+                        else IOException("无法解析主机协议消息", e)
+                    failAttempt(error)
+                    if (attempt == generation.get()) retryHandshake?.cancel()
+                    channel?.close(); peer.close(4003, "Invalid secure frame")
                 }
             }
-
+            override fun onMessage(webSocket: WebSocket, text: String) = receive(webSocket, text, null)
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = receive(webSocket, null, bytes.toByteArray())
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (attempt == generation.get()) fail(when (reason) {
-                    "Password required" -> AuthenticationException("主机需要密码")
-                    "Incorrect password" -> AuthenticationException("主机密码不正确")
-                    else -> IOException(reason.ifBlank { "连接已关闭 ($code)" })
+                if (attempt != generation.get()) { channel?.close(); return }
+                retryHandshake?.cancel(); channel?.close()
+                failAttempt(when {
+                    reason == "Password required" -> AuthenticationException("主机需要密码", AuthFailure.PasswordRequired)
+                    reason == "Incorrect password" -> AuthenticationException("主机密码不正确", AuthFailure.IncorrectPassword)
+                    code == 4002 || reason.contains("protected endpoint security") -> AuthenticationException("主机要求安全配对，请重新复制配对链接", AuthFailure.Security)
+                    else -> IOException("连接已关闭 ($code)")
                 })
             }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (attempt == generation.get()) fail(if (response?.code == 401 || response?.code == 403)
-                    AuthenticationException("主机拒绝连接，请检查密码和访问权限") else IOException("连接失败：${response?.code ?: t.message}"))
+                if (attempt != generation.get()) { channel?.close(); return }
+                retryHandshake?.cancel(); channel?.close()
+                failAttempt(if (channel == null && (response?.code == 401 || response?.code == 403))
+                    AuthenticationException("请检查主机密码", if (host.password.isEmpty()) AuthFailure.PasswordRequired else AuthFailure.IncorrectPassword)
+                    else IOException("连接失败，请检查网络或主机是否在线", t))
             }
         })
-        return try {
-            withTimeout(15_000) { ready.await() }
-        } catch (error: Exception) {
-            disconnect()
-            throw error
-        }
+        return try { withTimeout(20_000) { ready.await() } }
+        catch (error: Exception) { disconnect(); throw error }
     }
 
     suspend fun request(type: String, vararg fields: Pair<String, Any?>): JsonObject {
@@ -150,16 +191,15 @@ class DaemonSocket(
         } finally { if (!deferredCleanup) pending.remove(id) }
     }
 
-    fun send(type: String, vararg fields: Pair<String, Any?>) {
+    fun send(type: String, vararg fields: Pair<String, Any?>) = synchronized(outbound) {
         check(_connected.value) { "主机未连接" }
-        val sent = socket?.send(jsonObject("type" to "session", "message" to jsonObject("type" to type, *fields)).toString())
+        val text = jsonObject("type" to "session", "message" to jsonObject("type" to type, *fields)).toString()
+        val sent = socket?.send(secure?.encrypt(text) ?: text)
         check(sent == true) { "连接已断开" }
     }
-
-    fun disconnect() {
-        generation.incrementAndGet()
-        socket?.cancel()
-        socket = null
+    fun disconnect() = synchronized(outbound) {
+        generation.incrementAndGet(); retryHandshake?.cancel(); retryHandshake = null
+        socket?.cancel(); socket = null; secure?.close(); secure = null
         fail(IOException("连接已断开"))
     }
     private fun fail(error: Exception) {
@@ -169,10 +209,7 @@ class DaemonSocket(
         pending.clear()
     }
     fun close() {
-        disconnect()
-        cleanupScope.cancel()
-        incoming.close()
-        client.dispatcher.executorService.shutdown()
-        client.connectionPool.evictAll()
+        disconnect(); cleanupScope.cancel(); incoming.close()
+        client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll()
     }
 }

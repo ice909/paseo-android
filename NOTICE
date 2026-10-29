@@ -9,3 +9,10 @@ Reference revision: abc97e0545bb92e43eb96027102d845657c0a2eb
 
 The upstream license is included in LICENSE. This implementation does not
 bundle the React Native client, JavaScript runtime, or upstream daemon.
+
+Relay endpoint security follows the upstream packages/relay and protocol
+pairing formats. Noise NK compatibility vectors are included for testing;
+their original vector source URLs are retained in the JSON resource.
+
+This app uses Bouncy Castle 1.86 lightweight cryptographic primitives,
+licensed under the MIT license: https://www.bouncycastle.org/licence.html

@@ -18,8 +18,10 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -30,7 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import sh.paseo.android.AppViewModel
 import sh.paseo.android.core.*
 
@@ -42,98 +44,141 @@ fun PaseoApp(vm: AppViewModel) {
     val hosts by vm.hosts.collectAsStateWithLifecycle()
     val initialized by vm.initialized.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    var showHostEditor by remember { mutableStateOf(false) }
-    var editingHost by remember { mutableStateOf<Host?>(null) }
-    var showCreate by remember { mutableStateOf(false) }
-    var renaming by remember { mutableStateOf(false) }
-    var archiving by remember { mutableStateOf(false) }
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    var editingHostId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editingHost = hosts.find { it.id == editingHostId }
+    var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-
+    var rename by remember { mutableStateOf("") }
+    var archive by remember { mutableStateOf("") }
+    var picker by rememberSaveable { mutableStateOf(false) }
+    var explorer by rememberSaveable(state.selectedWorkspaceId) { mutableStateOf(false) }
+    var explorerTab by rememberSaveable { mutableIntStateOf(0) }
+    var terminal by rememberSaveable(state.selectedWorkspaceId) { mutableStateOf(false) }
+    var createAgent by rememberSaveable { mutableStateOf(false) }
+    var newProject by rememberSaveable { mutableStateOf<String?>(null) }
+    val workspace = state.selectedWorkspace
+    fun navigate(destination: String) {
+        scope.launch { drawer.close() }
+        vm.screen.value = destination
+        explorer = false; createAgent = false
+    }
+    LaunchedEffect(state.selectedWorkspaceId, state.workspaceAgents.map { it.id }, state.selectedAgentId, terminal, createAgent) {
+        if (screen == "chat" && !terminal && !createAgent && state.selectedAgentId == null) state.workspaceAgents.firstOrNull()?.let(vm::openAgent)
+    }
     LaunchedEffect(vm) { vm.notices.collect { snackbar.showSnackbar(it) } }
-    LaunchedEffect(state.error) {
-        state.error?.let { snackbar.showSnackbar(it); vm.repository.clearError() }
+    LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); vm.repository.clearError() } }
+    BackHandler(drawer.isOpen || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
+        when {
+            drawer.isOpen -> scope.launch { drawer.close() }
+            explorer -> explorer = false
+            createAgent -> createAgent = false
+            else -> { vm.backToSessions(); terminal = false }
+        }
     }
-    BackHandler(screen == "chat" || (screen == "hosts" && state.host != null)) {
-        if (screen == "chat") vm.backToSessions() else vm.screen.value = "sessions"
-    }
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            TopAppBar(
-                title = {
-                    if (screen == "chat") Column {
-                        Text(state.selectedAgent?.displayTitle ?: "会话", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                        Text(state.selectedAgent?.let { listOfNotNull(it.provider, it.model).joinToString(" · ") }.orEmpty(),
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Icon(Icons.Outlined.Code, null, tint = MaterialTheme.colorScheme.primary)
-                        Text("paseo", fontWeight = FontWeight.Bold)
-                        Surface(shape = RoundedCornerShape(5.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                            Text("NATIVE", modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                },
-                navigationIcon = {
-                    if (screen == "chat" || (screen == "hosts" && state.host != null)) IconButton(onClick = {
-                        if (screen == "chat") vm.backToSessions() else vm.screen.value = "sessions"
-                    }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
-                },
-                actions = {
-                    when (screen) {
-                        "hosts" -> IconButton(onClick = { editingHost = null; showHostEditor = true }) { Icon(Icons.Outlined.Add, "添加主机") }
-                        "sessions" -> {
-                            IconButton(onClick = { vm.action { vm.repository.refreshAgents() } }, enabled = state.connected) { Icon(Icons.Outlined.Refresh, "刷新会话") }
-                            IconButton(onClick = { vm.screen.value = "hosts" }) { Icon(Icons.Outlined.Dns, "管理主机") }
-                        }
-                        "chat" -> Box {
-                            IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "会话选项") }
-                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                DropdownMenuItem(text = { Text("刷新消息") }, onClick = { menu = false; state.selectedAgentId?.let(vm.repository::selectAgent) }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) })
-                                DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; renaming = true }, leadingIcon = { Icon(Icons.Outlined.Edit, null) })
-                                DropdownMenuItem(text = { Text("归档会话") }, onClick = { menu = false; archiving = true }, leadingIcon = { Icon(Icons.Outlined.Archive, null) })
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = screen != "hosts", drawerContent = {
+        ModalDrawerSheet(drawerContainerColor = sidebarColor(), drawerContentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.widthIn(max = 340.dp).fillMaxHeight()) {
+            WorkspaceSidebar(state, onNew = { newProject = it; navigate("new") }, onOpen = {
+                vm.openWorkspace(it); terminal = false; createAgent = false; explorer = false; scope.launch { drawer.close() }
+            }, onHosts = { navigate("hosts") }, onRefresh = { vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() } },
+                onMore = { vm.action { vm.repository.refreshWorkspaces(loadMore = true) } })
+        }
+    }) {
+        Scaffold(snackbarHost = { SnackbarHost(snackbar) }, containerColor = MaterialTheme.colorScheme.background,
+            topBar = {
+                Column(Modifier.statusBarsPadding()) {
+                    Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Outlined.Menu, "打开侧栏") }
+                        if (explorer) {
+                            listOf("改动", "文件").forEachIndexed { index, label ->
+                                FilterChip(selected = explorerTab == index, onClick = { explorerTab = index }, label = { Text(label) }, modifier = Modifier.padding(end = 8.dp))
                             }
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = { explorer = false }) { Icon(Icons.Outlined.Close, "关闭文件面板") }
+                        } else {
+                            Column(Modifier.weight(1f).padding(start = 2.dp)) {
+                                Text(if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
+                                    style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (screen == "chat" && workspace != null && !createAgent) Text(workspace.projectDisplayName,
+                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
+                            if (screen == "hosts") IconButton(onClick = { editingHostId = null; showHostEditor = true }) { Icon(Icons.Outlined.Add, "添加主机") }
+                            if (screen == "chat" && workspace != null && !createAgent) {
+                                Box {
+                                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreHoriz, "工作区选项") }
+                                    DropdownMenu(menu, { menu = false }) {
+                                        DropdownMenuItem(text = { Text("重命名工作区") }, onClick = { menu = false; rename = "workspace" })
+                                        DropdownMenuItem(text = { Text(if (workspace.pinnedAt == null) "置顶工作区" else "取消置顶") }, onClick = { menu = false; vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } })
+                                        DropdownMenuItem(text = { Text("归档工作区") }, onClick = { menu = false; archive = "workspace" })
+                                        if (state.selectedAgent != null) {
+                                            HorizontalDivider()
+                                            DropdownMenuItem(text = { Text("重命名会话") }, onClick = { menu = false; rename = "agent" })
+                                            DropdownMenuItem(text = { Text("归档会话") }, onClick = { menu = false; archive = "agent" })
+                                        }
+                                        DropdownMenuItem(text = { Text("刷新") }, onClick = { menu = false; vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() }; state.selectedAgentId?.let(vm.repository::selectAgent) })
+                                    }
+                                }
+                                IconButton(onClick = { explorer = true }) { Icon(Icons.Outlined.ChromeReaderMode, "打开文件和改动") }
+                            }
+                            if (createAgent) IconButton(onClick = { createAgent = false }) { Icon(Icons.Outlined.Close, "取消新建代理") }
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
-        },
-        floatingActionButton = {
-            if (screen == "sessions") ExtendedFloatingActionButton(onClick = { if (state.connected) showCreate = true },
-                icon = { Icon(Icons.Outlined.Add, null) }, text = { Text("新会话") }, containerColor = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.semantics { contentDescription = "新会话" })
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            if (!initialized) CircularProgressIndicator(Modifier.align(Alignment.Center))
-            else when (screen) {
-                "hosts" -> HostsScreen(hosts, state, onConnect = vm::connect,
-                    onAdd = { editingHost = null; showHostEditor = true },
-                    onEdit = { editingHost = it; showHostEditor = true }, onDelete = vm::deleteHost)
-                "chat" -> ChatScreen(vm, state)
-                else -> SessionsScreen(state, vm::openAgent, { vm.screen.value = "hosts" }, { vm.action { vm.repository.refreshAgents(loadMore = true) } })
+                    if (!state.connected && screen != "hosts") ConnectionStrip(state) { state.host?.let(vm::connect) }
+                    if (screen == "chat" && workspace != null && !explorer && !createAgent) Surface(onClick = { picker = true }, color = MaterialTheme.colorScheme.background) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(if (terminal) Icons.Outlined.Terminal else Icons.Outlined.AutoAwesome, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (terminal) "终端" else state.selectedAgent?.displayTitle ?: "选择代理", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (terminal) "" else state.selectedAgent?.provider.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Icons.Outlined.UnfoldMore, "切换代理或终端", Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                when {
+                    !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { editingHostId = null; showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
+                    screen == "chat" && workspace != null && explorer -> if (explorerTab == 0) DiffPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else FilesPane(vm, workspace.context, state.connected, Modifier.fillMaxSize())
+                    screen == "chat" && workspace != null && !createAgent -> if (terminal) TerminalPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else ChatScreen(vm, state, onCreateAgent = { createAgent = true })
+                    else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject) { createAgent = false; terminal = false }
+                }
             }
         }
     }
-    if (showHostEditor) HostEditor(vm, editingHost) { showHostEditor = false }
-    if (showCreate) CreateAgentDialog(vm, state) { showCreate = false }
-    if (renaming) TextEntryDialog("重命名会话", state.selectedAgent?.displayTitle.orEmpty(), "名称", { renaming = false }) { name ->
-        vm.action { state.selectedAgentId?.let { vm.repository.renameAgent(it, name) }; renaming = false }
+    if (picker && workspace != null) ModalBottomSheet(onDismissRequest = { picker = false }) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            Text("代理和终端", Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall)
+            state.workspaceAgents.forEach { agent ->
+                ListItem(headlineContent = { Text(agent.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) }, supportingContent = { Text("${agent.provider} · ${agentStatus(agent)}") },
+                    leadingContent = { StatusDot(agent.pendingPermissions.isNotEmpty(), agent.running, agent.status == "error") },
+                    trailingContent = { if (agent.id == state.selectedAgentId && !terminal) Icon(Icons.Outlined.Check, null) },
+                    modifier = Modifier.clickable { vm.openAgent(agent); terminal = false; picker = false })
+            }
+            ListItem(headlineContent = { Text("新建代理") }, leadingContent = { Icon(Icons.Outlined.Add, null) }, modifier = Modifier.clickable { createAgent = true; picker = false })
+            ListItem(headlineContent = { Text("终端") }, leadingContent = { Icon(Icons.Outlined.Terminal, null) }, modifier = Modifier.clickable { terminal = true; picker = false })
+        }
     }
-    if (archiving) AlertDialog(onDismissRequest = { archiving = false }, title = { Text("归档此会话？") },
-        text = { Text("会话会从活动列表移除，历史记录保留在主机上。") },
-        confirmButton = { TextButton(onClick = {
-            vm.action { state.selectedAgentId?.let { vm.repository.archiveAgent(it) }; archiving = false; vm.screen.value = "sessions" }
-        }, enabled = state.connected) { Text("归档") } }, dismissButton = { TextButton(onClick = { archiving = false }) { Text("取消") } })
+    if (showHostEditor) HostEditor(vm, editingHost) { showHostEditor = false }
+    if (rename.isNotEmpty()) TextEntryDialog(if (rename == "workspace") "重命名工作区" else "重命名会话",
+        if (rename == "workspace") workspace?.name.orEmpty() else state.selectedAgent?.displayTitle.orEmpty(), "名称", { rename = "" }) { name ->
+        vm.action { if (rename == "workspace") workspace?.let { vm.repository.renameWorkspace(it.id, name) } else state.selectedAgentId?.let { vm.repository.renameAgent(it, name) }; rename = "" }
+    }
+    if (archive.isNotEmpty()) AlertDialog(onDismissRequest = { archive = "" }, title = { Text(if (archive == "workspace") "归档工作区？" else "归档会话？") },
+        text = { Text("将从活动列表移除，历史记录保留在主机上。") },
+        confirmButton = { TextButton(enabled = state.connected, onClick = { vm.action {
+            if (archive == "workspace") { workspace?.let { vm.repository.archiveWorkspace(it.id) }; vm.screen.value = "sessions" }
+            else state.selectedAgentId?.let { vm.repository.archiveAgent(it) }
+            archive = ""
+        } }) { Text("归档") } }, dismissButton = { TextButton(onClick = { archive = "" }) { Text("取消") } })
 }
 
 @Composable
 fun ConnectionStrip(state: PaseoState, onClick: () -> Unit = {}) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            Box(Modifier.size(7.dp).background(if (state.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, RoundedCornerShape(50)))
-            Text(state.host?.name ?: "尚未连接主机", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            Box(Modifier.size(7.dp).background(if (state.connected) Color(0xFF35C264) else MaterialTheme.colorScheme.outline, RoundedCornerShape(50)))
+            Text(state.host?.displayName ?: "尚未连接主机", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
             Text(when (state.connection) {
                 ConnectionStatus.Connected -> "已连接"
                 ConnectionStatus.Connecting -> "连接中…"
@@ -163,12 +208,12 @@ private fun HostsScreen(hosts: List<Host>, state: PaseoState, onConnect: (Host) 
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Computer, null, tint = MaterialTheme.colorScheme.primary)
                     Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(host.name, style = MaterialTheme.typography.titleMedium)
+                        Text(host.displayName, style = MaterialTheme.typography.titleMedium)
                         Text(host.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (host.id == state.host?.id && state.connected) Text("已连接", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(onClick = { onEdit(host) }) { Icon(Icons.Outlined.Edit, "编辑 ${host.name}", Modifier.size(20.dp)) }
-                    IconButton(onClick = { deleting = host }) { Icon(Icons.Outlined.DeleteOutline, "移除 ${host.name}", Modifier.size(20.dp)) }
+                    IconButton(onClick = { onEdit(host) }) { Icon(Icons.Outlined.Edit, "编辑 ${host.displayName}", Modifier.size(20.dp)) }
+                    IconButton(onClick = { deleting = host }) { Icon(Icons.Outlined.DeleteOutline, "移除 ${host.displayName}", Modifier.size(20.dp)) }
                 }
             }
         }
@@ -177,12 +222,12 @@ private fun HostsScreen(hosts: List<Host>, state: PaseoState, onConnect: (Host) 
             Column(Modifier.padding(top = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("开始连接", style = MaterialTheme.typography.titleSmall)
                 HelpStep("1", "在电脑上安装并启动 Paseo。")
-                HelpStep("2", "使用电脑的局域网、VPN 或 Tailscale 地址。")
-                HelpStep("3", "输入主机地址和密码，或粘贴直连配对链接。")
+                HelpStep("2", "在电脑上选择「配对设备」，复制配对链接。")
+                HelpStep("3", "点击「添加主机」，粘贴链接并连接。")
             }
         }
     }
-    deleting?.let { host -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("移除 ${host.name}？") }, text = { Text("移除本机保存的连接配置。") },
+    deleting?.let { host -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("移除 ${host.displayName}？") }, text = { Text("移除本机保存的连接配置。") },
         confirmButton = { TextButton(onClick = { onDelete(host); deleting = null }) { Text("移除") } },
         dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } }) }
 }
@@ -192,64 +237,6 @@ private fun HelpStep(number: String, text: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(number, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun SessionsScreen(state: PaseoState, onOpen: (Agent) -> Unit, onHosts: () -> Unit, onMore: () -> Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
-    var filter by rememberSaveable { mutableIntStateOf(0) }
-    val filtered = remember(state.agents, query, filter) { state.agents.filter {
-        (query.isBlank() || "${it.displayTitle} ${it.cwd} ${it.provider}".contains(query, true)) &&
-            when (filter) { 1 -> it.running; 2 -> it.pendingPermissions.isNotEmpty(); else -> true }
-    } }
-    Column {
-        ConnectionStrip(state, onHosts)
-        Column(Modifier.padding(20.dp, 20.dp, 20.dp, 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text("工作区", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text("${state.agents.size} 个会话", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("搜索会话或项目") },
-                leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true, shape = RoundedCornerShape(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("全部", "运行中", "待确认").forEachIndexed { index, label -> FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) }) }
-            }
-        }
-        if (filtered.isEmpty()) EmptyState(Icons.Outlined.Forum, if (query.isNotBlank()) "没有匹配的会话" else "还没有会话",
-            if (state.connected) "点击「新会话」，开始处理一个任务。" else "连接主机后，你的会话会显示在这里。", Modifier.weight(1f))
-        else LazyColumn(contentPadding = PaddingValues(bottom = 100.dp), modifier = Modifier.weight(1f)) {
-            filtered.groupBy { it.cwd }.forEach { (cwd, agents) ->
-                item("directory:$cwd") {
-                    Row(Modifier.padding(start = 22.dp, top = 18.dp, bottom = 8.dp, end = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Outlined.FolderOpen, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(cwd.substringAfterLast('/').ifEmpty { cwd }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        Text("${agents.size}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                    }
-                }
-                items(agents, key = { it.id }) { agent -> AgentCard(agent) { onOpen(agent) } }
-            }
-            if (state.nextAgentCursor != null) item { TextButton(onClick = onMore, modifier = Modifier.fillMaxWidth()) { Text("加载更多会话") } }
-        }
-    }
-}
-
-@Composable
-private fun AgentCard(agent: Agent, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(8.dp).background(when {
-                agent.pendingPermissions.isNotEmpty() -> MaterialTheme.colorScheme.tertiary
-                agent.running -> MaterialTheme.colorScheme.primary
-                agent.status == "error" -> MaterialTheme.colorScheme.error
-                else -> MaterialTheme.colorScheme.outline
-            }, RoundedCornerShape(50)))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(agent.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${agent.provider}  ·  ${agentStatus(agent)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline)
-        }
     }
 }
 
@@ -273,64 +260,47 @@ fun EmptyState(icon: ImageVector, title: String, description: String, modifier: 
     }
 }
 
+@Suppress("DEPRECATION")
 @Composable
 private fun HostEditor(vm: AppViewModel, host: Host?, onDismiss: () -> Unit) {
-    var name by rememberSaveable { mutableStateOf(host?.name.orEmpty()) }
-    var address by rememberSaveable { mutableStateOf(host?.url.orEmpty()) }
+    var name by rememberSaveable { mutableStateOf(host?.takeUnless { it.automaticName }?.name.orEmpty()) }
+    var address by rememberSaveable { mutableStateOf(host?.relay?.pairingLink() ?: host?.url.orEmpty()) }
     var password by rememberSaveable { mutableStateOf(host?.password.orEmpty()) }
+    var manual by rememberSaveable { mutableStateOf(host != null && host.relay == null) }
+    var more by rememberSaveable { mutableStateOf(false) }
     var visible by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text(if (host == null) "添加主机" else "编辑主机") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(name, { name = it }, label = { Text("主机名称") }, placeholder = { Text("我的开发机") }, singleLine = true)
-            OutlinedTextField(address, { address = it; error = null }, label = { Text("地址或直连配对链接") }, placeholder = { Text("192.168.1.10:6767") }, singleLine = true, isError = error != null)
-            OutlinedTextField(password, { password = it }, label = { Text("密码（可选）") }, singleLine = true,
-                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+    val saving by vm.pairingBusy.collectAsStateWithLifecycle()
+    val error by vm.pairingError.collectAsStateWithLifecycle()
+    val needsPassword by vm.pairingPasswordNeeded.collectAsStateWithLifecycle()
+    val clipboard = LocalClipboardManager.current
+    fun dismiss() { vm.cancelPairing(); onDismiss() }
+    fun changeAddress(text: String) { address = text; password = ""; vm.clearPairingError(resetPassword = true) }
+    LaunchedEffect(Unit) { vm.clearPairingError(resetPassword = true) }
+    AlertDialog(onDismissRequest = ::dismiss, title = { Text(if (manual) "手动连接" else "粘贴配对链接") },
+        text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(if (manual) "使用电脑的局域网、VPN 或 Tailscale 地址。" else "复制电脑上 Paseo 提供的配对链接，粘贴后即可连接。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(address, ::changeAddress, label = { Text(if (manual) "主机地址" else "配对链接") },
+                placeholder = { Text(if (manual) "192.168.1.10:6767" else "https://app.paseo.sh/#offer=…") },
+                modifier = Modifier.fillMaxWidth(), maxLines = 3, isError = error != null && !needsPassword, enabled = !saving,
+                trailingIcon = { IconButton(onClick = { clipboard.getText()?.text?.let(::changeAddress) }, enabled = !saving) { Icon(Icons.Outlined.ContentPaste, "从剪贴板粘贴链接") } })
+            if (manual || needsPassword) OutlinedTextField(password, { password = it; vm.clearPairingError() }, label = { Text(if (needsPassword) "主机密码" else "密码（可选）") }, singleLine = true, enabled = !saving,
+                modifier = Modifier.fillMaxWidth(), visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = { IconButton(onClick = { visible = !visible }) { Icon(if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, "显示或隐藏密码") } })
-            Text(error ?: "支持局域网和 VPN 直连，以及 ws / wss / tcp 链接。", style = MaterialTheme.typography.bodySmall, color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            if (saving) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text("正在验证并连接主机…", style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = { more = !more }, enabled = !saving) { Text(if (more) "收起更多选项" else "更多选项") }
+            if (more) {
+                OutlinedTextField(name, { name = it }, label = { Text("主机名称（可选）") }, supportingText = { Text("留空时使用电脑的名称") }, singleLine = true, enabled = !saving, modifier = Modifier.fillMaxWidth())
+                TextButton(onClick = { manual = !manual; vm.clearPairingError(resetPassword = true) }, enabled = !saving) { Text(if (manual) "使用配对链接" else "手动输入地址") }
+            }
         } },
         confirmButton = { TextButton(enabled = address.isNotBlank() && !saving, onClick = {
-            try { Endpoint.parse(address) } catch (e: Exception) { error = e.message; return@TextButton }
-            saving = true
-            vm.saveHost(host?.id, name, address, password, onDismiss).invokeOnCompletion { saving = false }
-        }) { Text(if (saving) "保存中…" else "保存并连接") } },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") } })
-}
-
-@Composable
-private fun CreateAgentDialog(vm: AppViewModel, state: PaseoState, onDismiss: () -> Unit) {
-    val creating by vm.creating.collectAsStateWithLifecycle()
-    val available = state.providers.filter { it.available }
-    var provider by rememberSaveable { mutableStateOf(available.firstOrNull()?.provider.orEmpty()) }
-    var cwd by rememberSaveable { mutableStateOf(state.agents.firstOrNull()?.cwd.orEmpty()) }
-    var model by rememberSaveable { mutableStateOf("") }
-    var title by rememberSaveable { mutableStateOf("") }
-    var prompt by rememberSaveable { mutableStateOf("") }
-    var models by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
-    var catalogError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(provider, cwd) {
-        models = emptyList(); model = ""; catalogError = null
-        if (provider.isNotBlank()) {
-            delay(350)
-            try { models = vm.repository.models(provider, cwd) }
-            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (e: Exception) { catalogError = e.message }
-        }
-    }
-    AlertDialog(onDismissRequest = { if (!creating) onDismiss() }, title = { Text("新会话") },
-        text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (available.isEmpty()) Text("主机上没有可用的编码代理。请先在电脑上安装并登录一个代理。", color = MaterialTheme.colorScheme.error)
-            ChoiceField("编码代理", provider, available.map { it.provider to it.provider }, { provider = it })
-            OutlinedTextField(cwd, { cwd = it }, label = { Text("工作目录（主机上的路径）") }, placeholder = { Text("/home/me/project") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            ChoiceField("模型", models.find { it.id == model }?.displayName ?: "提供方默认", listOf("" to "提供方默认") + models.map { it.id to it.displayName }, { model = it })
-            catalogError?.let { Text("模型列表读取失败，可使用默认模型。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            OutlinedTextField(title, { title = it }, label = { Text("会话名称（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(prompt, { prompt = it }, label = { Text("你想做什么？（可稍后发送）") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-        } },
-        confirmButton = { TextButton(enabled = state.connected && provider.isNotBlank() && cwd.startsWith('/') && !creating,
-            onClick = { vm.create(provider, cwd, model, prompt, title, onDismiss) }) { Text(if (creating) "创建中…" else "创建会话") } },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !creating) { Text("取消") } })
+            vm.saveHost(host?.id, name, address, password, onDismiss)
+        }) { Text(if (saving) "连接中…" else "连接") } },
+        dismissButton = { TextButton(onClick = ::dismiss) { Text("取消") } })
 }
 
 @Composable

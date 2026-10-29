@@ -1,7 +1,6 @@
 package sh.paseo.android.core
 
 import java.net.URI
-import java.net.URLDecoder
 import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
@@ -28,39 +27,11 @@ fun JsonObject.long(key: String): Long? = (get(key) as? JsonPrimitive)?.longOrNu
 fun newId(): String = UUID.randomUUID().toString()
 
 @Serializable
-data class Host(val id: String = newId(), val name: String, val url: String, val password: String = "")
-
-data class Endpoint(val url: String, val password: String? = null) {
-    companion object {
-        /** Supports official direct-pairing links, IPv6 and reverse-proxy path prefixes. */
-        fun parse(input: String): Endpoint {
-            val raw = input.trim().substringAfter("#connect=", input.trim()).let {
-                if (it.startsWith("tcp%", true) || it.startsWith("relay%", true))
-                    URLDecoder.decode(it, "UTF-8") else it
-            }
-            require(raw.isNotBlank()) { "请输入主机地址" }
-            require(!raw.startsWith("relay:", true)) { "中继配对尚未支持，请使用直连地址或 Tailscale 地址" }
-            val uri = URI(if ("://" in raw) raw else "ws://$raw")
-            val query = uri.rawQuery.orEmpty().split('&').filter { '=' in it }.associate {
-                URLDecoder.decode(it.substringBefore('='), "UTF-8") to
-                    URLDecoder.decode(it.substringAfter('='), "UTF-8")
-            }
-            val scheme = when (uri.scheme?.lowercase()) {
-                "ws", "http" -> "ws"
-                "wss", "https" -> "wss"
-                "tcp" -> if (query["ssl"] == "true") "wss" else "ws"
-                else -> error("支持 ws、wss、http、https 或 tcp 地址")
-            }
-            require(!uri.host.isNullOrBlank() && uri.userInfo == null) { "主机地址格式不正确" }
-            require(uri.port == -1 || uri.port in 1..65535) { "端口无效" }
-            val path = uri.path.orEmpty().trimEnd('/').let { if (it.endsWith("/ws")) it else "$it/ws" }
-            val retainedQuery = uri.rawQuery?.split('&')?.filter {
-                URLDecoder.decode(it.substringBefore('='), "UTF-8") !in setOf("password", "ssl")
-            }?.joinToString("&")?.ifBlank { null }
-            val authority = uri.rawAuthority
-            return Endpoint("$scheme://$authority$path" + (retainedQuery?.let { "?$it" } ?: ""), query["password"])
-        }
-    }
+data class Host(
+    val id: String = newId(), val name: String, val url: String, val password: String = "",
+    val relay: RelayOffer? = null, val automaticName: Boolean = false,
+) {
+    val displayName: String get() = name.ifBlank { relay?.serverId ?: runCatching { URI(url).host }.getOrNull() ?: "Paseo 主机" }
 }
 
 @Serializable
@@ -76,6 +47,7 @@ data class PermissionRequest(
 data class Agent(
     val id: String, val provider: String = "", val cwd: String = "",
     val workspaceId: String? = null, val model: String? = null,
+    val currentModeId: String? = null, val availableModes: List<ModeOption> = emptyList(),
     val title: String? = null, val status: String = "idle",
     val updatedAt: String = "", val archivedAt: String? = null,
     val pendingPermissions: List<PermissionRequest> = emptyList(),
@@ -90,6 +62,29 @@ data class Provider(val provider: String, val available: Boolean = false, val er
 data class ModelOption(val id: String, val label: String = "", val name: String = "") {
     val displayName: String get() = label.ifBlank { name.ifBlank { id } }
 }
+@Serializable
+data class ModeOption(val id: String, val label: String = "", val description: String? = null) {
+    val displayName: String get() = label.ifBlank { id }
+}
+@Serializable
+data class Workspace(
+    val id: String, val projectId: String, val projectDisplayName: String,
+    val projectRootPath: String, val workspaceDirectory: String? = null,
+    val projectKind: String = "directory", val workspaceKind: String = "directory",
+    val name: String, val title: String? = null, val status: String = "done",
+    val pinnedAt: String? = null, val activityAt: String? = null,
+    val gitRuntime: JsonObject? = null, val diffStat: JsonObject? = null,
+) {
+    val cwd: String get() = workspaceDirectory ?: projectRootPath
+    val context: WorkspaceContext get() = WorkspaceContext(id, cwd)
+    fun contains(agent: Agent): Boolean = agent.workspaceId == id || (agent.workspaceId == null && agent.cwd == cwd)
+}
+@Serializable
+data class Project(
+    val projectId: String, val projectDisplayName: String, val projectRootPath: String,
+    val projectKind: String = "directory",
+)
+data class WorkspaceContext(val id: String, val cwd: String)
 data class TimelineRow(
     val key: String, val type: String, val text: String = "", val title: String = "",
     val status: String = "", val detail: JsonObject = jsonObject(),
@@ -106,6 +101,11 @@ data class PaseoState(
     val agents: List<Agent> = emptyList(),
     val nextAgentCursor: String? = null,
     val providers: List<Provider> = emptyList(),
+    val workspaces: List<Workspace> = emptyList(),
+    val emptyProjects: List<Project> = emptyList(),
+    val nextWorkspaceCursor: String? = null,
+    val selectedWorkspaceId: String? = null,
+    val catalogLoaded: Boolean = false,
     val selectedAgentId: String? = null,
     val timeline: List<TimelineRow> = emptyList(),
     val hasOlder: Boolean = false,
@@ -113,6 +113,9 @@ data class PaseoState(
     val busy: Boolean = false,
     val error: String? = null,
 ) {
+    val selectedWorkspace: Workspace? get() = workspaces.find { it.id == selectedWorkspaceId }
+    val workspaceAgents: List<Agent> get() = selectedWorkspace?.let { workspace -> agents.filter(workspace::contains) }.orEmpty()
+    val projects: List<Project> get() = (workspaces.map { Project(it.projectId, it.projectDisplayName, it.projectRootPath, it.projectKind) } + emptyProjects).distinctBy { it.projectId }
     val selectedAgent: Agent? get() = agents.find { it.id == selectedAgentId }
     val connected: Boolean get() = connection == ConnectionStatus.Connected
 }

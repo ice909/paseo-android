@@ -25,6 +25,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     val localNetworkPermissionRequest = MutableStateFlow<Host?>(null)
     private var connectionRequestJob: Job? = null
+    private var networkPermissionResult: CompletableDeferred<Boolean>? = null
+    private var pairingJob: Job? = null
+    private var pairingGeneration = 0
+    val pairingBusy = MutableStateFlow(false)
+    val pairingError = MutableStateFlow<String?>(null)
+    val pairingPasswordNeeded = MutableStateFlow(false)
     private val messageIds = mutableMapOf<String, Pair<String, String>>()
 
     init {
@@ -39,32 +45,72 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun connect(host: Host) {
         connectionRequestJob?.cancel()
-        localNetworkPermissionRequest.value = null
         connectionRequestJob = action {
-            if (LocalNetworkAccess.permissionMissing(getApplication()) && LocalNetworkAccess.isLocalHost(host)) {
-                screen.value = "hosts"
-                localNetworkPermissionRequest.value = host
-            } else connectNow(host)
+            if (networkAccess(host)) connectNow(host)
+            else notices.emit("连接局域网主机需要附近设备权限，请允许后重试。")
         }
     }
-    fun onLocalNetworkPermissionResult(granted: Boolean) {
-        val host = localNetworkPermissionRequest.value ?: return
-        localNetworkPermissionRequest.value = null
-        if (granted) connectNow(host)
-        else notices.tryEmit("连接局域网主机需要附近设备权限，请在系统设置中允许后重试。")
+    private suspend fun networkAccess(host: Host): Boolean {
+        if (!LocalNetworkAccess.permissionMissing(getApplication()) || !LocalNetworkAccess.isLocalHost(host)) return true
+        networkPermissionResult?.cancel()
+        val result = CompletableDeferred<Boolean>()
+        networkPermissionResult = result
+        localNetworkPermissionRequest.value = host
+        return try { result.await() }
+        finally {
+            if (networkPermissionResult === result) { networkPermissionResult = null; localNetworkPermissionRequest.value = null }
+        }
     }
+    fun onLocalNetworkPermissionResult(granted: Boolean) { networkPermissionResult?.complete(granted) }
+    fun clearPairingError(resetPassword: Boolean = false) {
+        pairingError.value = null
+        if (resetPassword) pairingPasswordNeeded.value = false
+    }
+    fun cancelPairing() { pairingGeneration++; pairingJob?.cancel(); pairingJob = null; pairingBusy.value = false }
     private fun connectNow(host: Host) {
         repository.connect(host)
         screen.value = "sessions"
         action { persist(host.id) }
     }
-    fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit) = action {
-        val endpoint = Endpoint.parse(address)
-        val host = Host(id ?: newId(), name.trim().ifBlank { java.net.URI(endpoint.url).host }, endpoint.url, password.ifEmpty { endpoint.password.orEmpty() })
-        val updated = hosts.value.filterNot { it.id == host.id } + host
-        storageMutex.withLock { store.save(updated, host.id); hosts.value = updated }
-        connect(host)
-        onSaved()
+    fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit): Job {
+        val attempt = ++pairingGeneration
+        pairingJob?.cancel()
+        pairingBusy.value = true
+        pairingJob = viewModelScope.launch {
+            pairingError.value = null
+            var probe: DaemonSocket? = null
+            try {
+                val endpoint = Endpoint.parse(address)
+                val relay = endpoint.relay
+                val existing = hosts.value.find { old -> old.id == id || (id == null &&
+                    if (relay != null) old.relay?.serverId == relay.serverId else old.relay == null && old.url == endpoint.url) }
+                val preservedName = existing?.takeIf { id == null && !it.automaticName }?.name
+                val draft = Host(id ?: existing?.id ?: newId(), name.trim(), endpoint.url,
+                    password.ifEmpty { endpoint.password.orEmpty() }, relay, automaticName = name.isBlank() && preservedName == null)
+                if (!networkAccess(draft)) {
+                    pairingError.value = "连接局域网主机需要附近设备权限，请允许后重试。"
+                    return@launch
+                }
+                // Probe before replacing or saving a host. Invalid links/passwords leave existing hosts untouched.
+                val candidate = DaemonSocket()
+                probe = candidate
+                val info = withContext(Dispatchers.IO) { candidate.open(draft) }
+                val label = name.trim().ifBlank { preservedName ?: info.string("hostname").ifBlank { draft.displayName } }
+                val host = draft.copy(name = label)
+                val updated = hosts.value.filterNot { it.id == host.id } + host
+                storageMutex.withLock { store.save(updated, host.id); hosts.value = updated }
+                connect(host)
+                onSaved()
+            } catch (_: TimeoutCancellationException) {
+                pairingError.value = "连接超时，请确认电脑上的 Paseo 已启动，并检查网络。"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: AuthenticationException) {
+                pairingPasswordNeeded.value = error.reason in setOf(AuthFailure.PasswordRequired, AuthFailure.IncorrectPassword)
+                pairingError.value = error.message
+            } catch (error: Exception) { pairingError.value = error.message ?: "无法连接此主机" }
+            finally { probe?.close(); if (attempt == pairingGeneration) pairingBusy.value = false }
+        }
+        return pairingJob!!
     }
     fun deleteHost(host: Host) = action {
         val updated = hosts.value.filterNot { it.id == host.id }
@@ -72,6 +118,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (state.value.host?.id == host.id) { repository.disconnect(); screen.value = "hosts" }
     }
     private suspend fun persist(id: String?) = storageMutex.withLock { store.save(hosts.value, id) }
+    fun openWorkspace(workspace: Workspace) { repository.openWorkspace(workspace); screen.value = "chat" }
     fun openAgent(agent: Agent) { repository.selectAgent(agent.id); screen.value = "chat" }
     fun backToSessions() { repository.leaveAgent(); screen.value = "sessions" }
     fun setDraft(id: String, text: String) { drafts.update { it + (id to text) } }
@@ -91,12 +138,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } finally { sending.value = false }
         }
     }
-    fun create(provider: String, cwd: String, model: String, prompt: String, title: String, onCreated: () -> Unit) {
+    fun create(provider: String, cwd: String, model: String, mode: String, prompt: String, title: String,
+        key: String, workspace: Workspace?, projectId: String?, worktree: Boolean, branch: String, onCreated: () -> Unit) {
         if (creating.value) return
         creating.value = true
         action {
             try {
-                repository.createAgent(provider, cwd.trim(), model, prompt, title)
+                if (workspace != null) repository.createAgent(workspace, provider, model, mode, prompt, title, key)
+                else repository.createWorkspace(provider, cwd.trim(), model, mode, prompt, title, key, projectId, worktree, branch)
                 screen.value = "chat"
                 onCreated()
             } finally { creating.value = false }

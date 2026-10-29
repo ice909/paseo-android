@@ -23,6 +23,7 @@ class PaseoRepositoryTest {
                 val message = frame.obj("message")
                 val requestId = message.string("requestId")
                 when (message.string("type")) {
+                    "fetch_workspaces_request" -> reply("fetch_workspaces_response", jsonObject("requestId" to requestId, "entries" to emptyList<Any>(), "pageInfo" to jsonObject("hasMore" to false)))
                     "fetch_agents_request" -> reply("fetch_agents_response", jsonObject("requestId" to requestId, "subscriptionId" to "catalog", "entries" to listOf(jsonObject("agent" to agent)), "pageInfo" to jsonObject("hasMore" to false)))
                     "list_available_providers_request" -> reply("list_available_providers_response", jsonObject("requestId" to requestId, "providers" to listOf(jsonObject("provider" to "claude", "available" to true))))
                     "agent.timeline.set_subscription.request" -> reply("agent.timeline.set_subscription.response", jsonObject("requestId" to requestId, "subscriptionId" to "timeline", "agentIds" to listOf("agent1")))

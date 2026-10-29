@@ -30,22 +30,12 @@ import sh.paseo.android.AppViewModel
 import sh.paseo.android.core.*
 
 @Composable
-fun ChatScreen(vm: AppViewModel, state: PaseoState) {
-    var tab by rememberSaveable(state.selectedAgentId) { mutableIntStateOf(0) }
+fun ChatScreen(vm: AppViewModel, state: PaseoState, onCreateAgent: () -> Unit) {
     val agent = state.selectedAgent
-    Column(Modifier.fillMaxSize()) {
-        if (!state.connected) ConnectionStrip(state) { state.host?.let(vm::connect) }
-        SecondaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
-            listOf("对话", "文件", "改动", "终端").forEachIndexed { index, title -> Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) }) }
-        }
-        if (agent == null) EmptyState(Icons.Outlined.Forum, "正在读取会话", "连接主机后自动恢复。", Modifier.weight(1f))
-        else when (tab) {
-            0 -> Conversation(vm, state, agent, Modifier.weight(1f))
-            1 -> FilesPane(vm, agent, state.connected, Modifier.weight(1f))
-            2 -> DiffPane(vm, agent, state.connected, Modifier.weight(1f))
-            3 -> TerminalPane(vm, agent, state.connected, Modifier.weight(1f))
-        }
-    }
+    if (agent == null) Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        EmptyState(Icons.Outlined.AutoAwesome, "工作区已就绪", "新建一个代理，开始处理任务。")
+        Button(onClick = onCreateAgent, enabled = state.connected) { Icon(Icons.Outlined.Add, null); Text("新建代理") }
+    } else key(agent.id) { Conversation(vm, state, agent, Modifier.fillMaxSize()) }
 }
 
 @Composable
@@ -55,6 +45,18 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, modi
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var following by remember { mutableStateOf(true) }
+    var models by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
+    var commands by remember { mutableStateOf<List<kotlinx.serialization.json.JsonObject>>(emptyList()) }
+    var setting by remember { mutableStateOf(false) }
+    LaunchedEffect(agent.id, state.connected) {
+        if (!state.connected) return@LaunchedEffect
+        try { models = vm.repository.models(agent.provider, agent.cwd) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { /* Default model remains usable. */ }
+        try { commands = vm.repository.commands(agent.id) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { /* Commands can also be typed directly. */ }
+    }
     val rows = state.timeline
     val last = rows.lastOrNull()
     LaunchedEffect(listState) {
@@ -87,23 +89,26 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, modi
             Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("最新消息")
         }
         if (agent.pendingPermissions.isNotEmpty()) Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
-            agent.pendingPermissions.forEach { request -> PermissionCard(vm, agent.id, request, state.connected) }
+            agent.pendingPermissions.forEach { request -> key(request.id) { PermissionCard(vm, agent.id, request, state.connected) } }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = drafts[agent.id].orEmpty(), onValueChange = { vm.setDraft(agent.id, it) },
-                modifier = Modifier.weight(1f), placeholder = { Text("发送消息…") },
-                maxLines = 6, shape = RoundedCornerShape(20.dp),
-            )
-            if (agent.running && drafts[agent.id].isNullOrBlank()) FilledTonalIconButton(
-                onClick = { vm.action { vm.repository.cancelAgent(agent.id) } }, enabled = state.connected,
-                modifier = Modifier.padding(bottom = 4.dp).size(48.dp),
-            ) { Icon(Icons.Outlined.Stop, "停止生成") }
-            else FilledIconButton(onClick = { following = true; vm.send() }, enabled = state.connected && !sending && !drafts[agent.id].isNullOrBlank(), modifier = Modifier.padding(bottom = 4.dp).size(48.dp)) {
-                if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, "发送消息")
-            }
+        val draft = drafts[agent.id].orEmpty()
+        if (draft.startsWith('/') && !draft.contains(' ')) {
+            val matching = commands.filter { it.string("name").removePrefix("/").contains(draft.removePrefix("/"), true) }.take(5)
+            matching.forEach { command -> ListItem(headlineContent = { Text("/" + command.string("name").removePrefix("/")) }, supportingContent = { Text(command.string("description"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                modifier = Modifier.clickable { vm.setDraft(agent.id, "/" + command.string("name").removePrefix("/") + " ") }) }
         }
+        MessageComposer(draft, { vm.setDraft(agent.id, it) }, "发送消息，/ 选择命令", canSend = state.connected && (agent.running || draft.isNotBlank()),
+            sending = sending, onSend = { following = true; vm.send() }, running = agent.running,
+            onStop = { vm.action { vm.repository.cancelAgent(agent.id) } }, options = {
+                ComposerChoice(models.find { it.id == agent.model }?.displayName ?: agent.model ?: agent.provider,
+                    models.map { it.id to it.displayName }, enabled = state.connected && !setting && !agent.running) { model ->
+                    setting = true; vm.action { try { vm.repository.setModel(agent.id, model) } finally { setting = false } }
+                }
+                if (agent.availableModes.isNotEmpty()) ComposerChoice(agent.availableModes.find { it.id == agent.currentModeId }?.displayName ?: "模式",
+                    agent.availableModes.map { it.id to it.displayName }, enabled = state.connected && !setting && !agent.running) { mode ->
+                    setting = true; vm.action { try { vm.repository.setMode(agent.id, mode) } finally { setting = false } }
+                }
+            })
     }
 }
 
@@ -111,17 +116,11 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, modi
 private fun TimelineItem(row: TimelineRow) {
     when (row.type) {
         "user_message" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), modifier = Modifier.widthIn(max = 560.dp)) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp), modifier = Modifier.widthIn(max = 560.dp)) {
                 SelectionContainer { Text(row.text, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyLarge) }
             }
         }
-        "assistant_message" -> Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("代理", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            MarkdownText(row.text)
-        }
+        "assistant_message" -> MarkdownText(row.text)
         "reasoning" -> CollapsibleBlock("思考过程", row.text, Icons.Outlined.Psychology)
         "tool_call" -> {
             val body = row.detail.let { detail -> listOf(
@@ -154,9 +153,9 @@ private fun TimelineItem(row: TimelineRow) {
 @Composable
 private fun CollapsibleBlock(title: String, body: String, icon: androidx.compose.ui.graphics.vector.ImageVector, isError: Boolean = false) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxWidth()) {
         Column {
-            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(icon, null, Modifier.size(17.dp), tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(title, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (expanded) "收起" else "展开", Modifier.size(18.dp))
@@ -169,6 +168,7 @@ private fun CollapsibleBlock(title: String, body: String, icon: androidx.compose
 @Composable
 private fun PermissionCard(vm: AppViewModel, agentId: String, request: PermissionRequest, connected: Boolean) {
     var pending by remember(request.id) { mutableStateOf(false) }
+    val questions = remember(request) { request.questions() }
     val actions = request.actions.ifEmpty { listOf(PermissionAction("", "允许", "allow"), PermissionAction("", "拒绝", "deny")) }
     OutlinedCard(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -177,10 +177,18 @@ private fun PermissionCard(vm: AppViewModel, agentId: String, request: Permissio
                 Text(request.title ?: request.name, style = MaterialTheme.typography.titleSmall)
             }
             request.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            val detail = request.detail?.let { it.string("command").ifBlank { it.string("text").ifBlank { it.toString() } } } ?: request.input?.toString()
-            detail?.let { Text(it.take(3000), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, maxLines = 8, overflow = TextOverflow.Ellipsis) }
+            if (questions.isNotEmpty()) {
+                QuestionForm(questions, connected && !pending) { answers ->
+                    pending = true
+                    vm.action { try { vm.repository.respondToPermission(agentId, request, "allow", updatedInput = request.answeredInput(answers)) }
+                        finally { pending = false } }
+                }
+            } else {
+                val detail = request.detail?.let { it.string("command").ifBlank { it.string("text").ifBlank { it.toString() } } } ?: request.input?.toString()
+                detail?.let { Text(it.take(3000), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, maxLines = 8, overflow = TextOverflow.Ellipsis) }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                actions.forEach { action ->
+                actions.filter { questions.isEmpty() || it.behavior == "deny" }.forEach { action ->
                     TextButton(onClick = {
                         pending = true
                         vm.action { try { vm.repository.respondToPermission(agentId, request, action.behavior, action.id.ifBlank { null }) }

@@ -34,7 +34,7 @@ import sh.paseo.android.AppViewModel
 import sh.paseo.android.core.*
 
 @Composable
-fun FilesPane(vm: AppViewModel, agent: Agent, connected: Boolean, modifier: Modifier) {
+fun FilesPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, modifier: Modifier) {
     var path by rememberSaveable(agent.id) { mutableStateOf("") }
     var openFile by rememberSaveable(agent.id) { mutableStateOf(false) }
     var payload by remember { mutableStateOf(jsonObject()) }
@@ -134,7 +134,7 @@ fun FilesPane(vm: AppViewModel, agent: Agent, connected: Boolean, modifier: Modi
 }
 
 @Composable
-fun DiffPane(vm: AppViewModel, agent: Agent, connected: Boolean, modifier: Modifier) {
+fun DiffPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, modifier: Modifier) {
     var payload by remember { mutableStateOf(jsonObject()) }
     var version by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
@@ -186,13 +186,14 @@ fun DiffPane(vm: AppViewModel, agent: Agent, connected: Boolean, modifier: Modif
 }
 
 @Composable
-fun TerminalPane(vm: AppViewModel, agent: Agent, connected: Boolean, modifier: Modifier) {
+fun TerminalPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, modifier: Modifier) {
     var terminals by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     var selectedId by rememberSaveable(agent.id) { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
     var command by rememberSaveable(agent.id) { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var confirmClose by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(agent.id, connected) {
         if (!connected) return@LaunchedEffect
@@ -214,6 +215,13 @@ fun TerminalPane(vm: AppViewModel, agent: Agent, connected: Boolean, modifier: M
         try { vm.repository.terminalInput(selectedId, data) }
         catch (e: Exception) { error = e.message }
     }
+    if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false }, title = { Text("关闭终端？") }, text = { Text("此终端中运行的进程将结束。") },
+        confirmButton = { TextButton(onClick = { scope.launch {
+            loading = true
+            try { vm.repository.closeTerminal(selectedId); terminals = terminals.filterNot { it.string("id") == selectedId }; selectedId = terminals.firstOrNull()?.string("id").orEmpty(); confirmClose = false }
+            catch (e: Exception) { if (e is CancellationException) throw e; error = e.message }
+            finally { loading = false }
+        } }, enabled = !loading) { Text("关闭") } }, dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("取消") } })
     Column(modifier.imePadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
@@ -221,6 +229,7 @@ fun TerminalPane(vm: AppViewModel, agent: Agent, connected: Boolean, modifier: M
                 TextButton(onClick = { expanded = true }) { Icon(Icons.Outlined.Terminal, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text(terminals.find { it.string("id") == selectedId }?.string("name")?.ifBlank { "终端" } ?: "文本终端"); Icon(Icons.Outlined.ExpandMore, null) }
                 DropdownMenu(expanded, { expanded = false }) { terminals.forEach { terminal -> DropdownMenuItem(text = { Text(terminal.string("name").ifBlank { terminal.string("id").take(8) }) }, onClick = { selectedId = terminal.string("id"); expanded = false }) } }
             }
+            if (selectedId.isNotBlank()) IconButton(onClick = { confirmClose = true }, enabled = connected && !loading) { Icon(Icons.Outlined.Close, "关闭终端") }
             IconButton(onClick = { scope.launch {
                 loading = true
                 try {
