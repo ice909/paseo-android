@@ -28,11 +28,26 @@ server.on('connection',(ws,request)=>{
     const legacy=['legacy','downgrade'].includes(id);
     if (request.headers.authorization) { info.audit.authorizationHeaders++; persist(); }
     let secured;
+    const uploads = new Map();
     const transport={send:data=>ws.send(data),close:(code=1000,reason='')=>ws.close(code,reason),onmessage:null,onclose:null,onerror:null};
     const send=(type,payload)=>secured.send(JSON.stringify({type:'session',message:{type,payload}}));
     const events={
         onmessage:data=>{
-            if (typeof data!=='string') return;
+            if (typeof data!=='string') {
+                const bytes = Buffer.from(data), opcode = bytes[0], length = bytes[1];
+                const requestId = bytes.subarray(2, 2 + length).toString();
+                const upload = uploads.get(requestId);
+                if (!upload) return;
+                const body = bytes.subarray(2 + length);
+                if (opcode === 0x10) upload.metadata = JSON.parse(body.subarray(2, 2 + body.readUInt16BE(0)).toString());
+                if (opcode === 0x11) upload.chunks.push(body);
+                if (opcode === 0x12) {
+                    const received = Buffer.concat(upload.chunks);
+                    send('file.upload.response', {requestId,error:null,file:{type:'uploaded_file',id:requestId,fileName:upload.fileName,mimeType:upload.mimeType,size:received.length,path:'/fixture/upload'}});
+                    info.audit.binaryUploads=(info.audit.binaryUploads??0)+1; persist();
+                }
+                return;
+            }
             const frame=JSON.parse(data);
             if(frame.type==='hello') {
                 info.audit.hellos++; persist();
@@ -50,6 +65,7 @@ server.on('connection',(ws,request)=>{
                 case 'fetch_workspaces_request': send('fetch_workspaces_response',{requestId,subscriptionId:'workspaces',entries:[workspace],emptyProjects:[],pageInfo:{hasMore:false,nextCursor:null}}); break;
                 case 'fetch_agents_request': send('fetch_agents_response',{requestId,subscriptionId:'agents',entries:[],pageInfo:{hasMore:false,nextCursor:null}}); break;
                 case 'list_available_providers_request': send('list_available_providers_response',{requestId,providers:[]}); break;
+                case 'file.upload.request': uploads.set(requestId,{...m,chunks:[]}); break;
                 case 'echo_request': send('echo_response',{requestId,text:m.text}); break;
                 case 'file_explorer_request': send('file_explorer_response',{requestId,error:null,directory:{entries:[{name:'README.md',path:'README.md',kind:'file'}]},file:m.mode==='file'?{path:'README.md',kind:'text',content:'Official relay library connection',modifiedAt:'2026-10-29T00:00:00Z',revision:'fixture-v1'}:null}); break;
                 case 'subscription.release.request': send('subscription.release.response',{requestId,subscriptionId:m.subscriptionId}); break;

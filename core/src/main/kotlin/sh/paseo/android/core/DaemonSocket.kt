@@ -14,6 +14,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.*
 import okhttp3.*
 import okio.ByteString
+import okio.ByteString.Companion.toByteString
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.time.Instant
 
 enum class AuthFailure { PasswordRequired, IncorrectPassword, Incompatible, Security }
 open class AuthenticationException(message: String, val reason: AuthFailure = AuthFailure.Incompatible) : IOException(message)
@@ -55,7 +59,7 @@ class DaemonSocket(
         }
         fun hello(peer: WebSocket) = transmit(peer, jsonObject(
             "type" to "hello", "clientId" to "paseo-android-${newId()}",
-            "clientType" to "mobile", "protocolVersion" to 1, "appVersion" to "0.2.0",
+            "clientType" to "mobile", "protocolVersion" to 1, "appVersion" to "0.6.0",
             "capabilities" to jsonObject("hello_rejection" to true, "all_providers" to true,
                 "owned_subscriptions" to true, "selective_agent_timeline" to true,
                 "timeline_replacement_invalidation" to true, "timeline_notifications" to true),
@@ -197,6 +201,67 @@ class DaemonSocket(
         val sent = socket?.send(secure?.encrypt(text) ?: text)
         check(sent == true) { "连接已断开" }
     }
+    fun connectionToken(): Long = generation.get()
+    suspend fun uploadFile(name: String, mime: String, size: Long, input: InputStream, expectedGeneration: Long? = null): JsonObject = withContext(Dispatchers.IO) {
+        require(size in 0..50L * 1024 * 1024) { "文件不能超过 50 MB" }
+        check(_connected.value) { "主机未连接" }
+        val attempt = expectedGeneration ?: generation.get()
+        val id = newId()
+        val result = CompletableDeferred<JsonObject>()
+        val modified = Instant.now().toString()
+        pending[id] = result
+        fun frame(opcode: Int, payload: ByteArray = byteArrayOf(), metadata: JsonObject? = null): ByteArray {
+            val request = id.toByteArray()
+            val body = metadata?.toString()?.toByteArray() ?: payload
+            return ByteBuffer.allocate(2 + request.size + (if (metadata != null) 2 else 0) + body.size)
+                .put(opcode.toByte()).put(request.size.toByte()).put(request).apply { if (metadata != null) putShort(body.size.toShort()) }.put(body).array()
+        }
+        suspend fun transmit(bytes: ByteArray) {
+            while (true) {
+                val sent = synchronized(outbound) {
+                    check(attempt == generation.get() && _connected.value) { "附件上传期间连接已变化，请重试" }
+                    val peer = socket ?: error("主机未连接")
+                    if (peer.queueSize() > 1_048_576) false else {
+                        val encrypted = secure?.encryptBinary(bytes)
+                        val ok = when {
+                            encrypted == null -> peer.send(bytes.toByteString())
+                            encrypted.first -> peer.send(encrypted.second.toByteString())
+                            else -> peer.send(encrypted.second.decodeToString())
+                        }
+                        check(ok) { "连接已断开" }; true
+                    }
+                }
+                if (sent) break
+                delay(10)
+            }
+        }
+        try {
+            withTimeout(120_000) {
+                synchronized(outbound) {
+                    check(attempt == generation.get()) { "附件上传期间连接已变化，请重试" }
+                    send("file.upload.request", "requestId" to id, "fileName" to name, "mimeType" to mime, "size" to size, "modifiedAt" to modified)
+                }
+                transmit(frame(0x10, metadata = jsonObject("mime" to mime, "size" to size, "encoding" to "binary", "modifiedAt" to modified, "fileName" to name)))
+                val chunk = ByteArray(128 * 1024)
+                var total = 0L
+                while (true) {
+                    if (result.isCompleted) break
+                    val count = input.read(chunk)
+                    if (count < 0) break
+                    total += count
+                    require(total <= size) { "文件大小已变化，请重新选择" }
+                    transmit(frame(0x11, chunk.copyOf(count)))
+                    yield()
+                }
+                if (!result.isCompleted) {
+                    require(total == size) { "文件读取不完整，请重新选择" }
+                    transmit(frame(0x12))
+                }
+                result.await().obj("file").also { check(it.string("type") == "uploaded_file") { "主机未返回上传文件" } }
+            }
+        } finally { pending.remove(id) }
+    }
+
     fun disconnect() = synchronized(outbound) {
         generation.incrementAndGet(); retryHandshake?.cancel(); retryHandshake = null
         socket?.cancel(); socket = null; secure?.close(); secure = null

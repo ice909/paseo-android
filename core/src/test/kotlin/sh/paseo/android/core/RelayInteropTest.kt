@@ -33,6 +33,18 @@ class RelayInteropTest {
         assertEquals(0,audit.long("authorizationHeaders")!!.toInt())
         assertEquals(0,audit.long("plaintextApplications")!!.toInt())
     }
+    @Test fun fileFramesCrossOfficialProtectedAndLegacyRelayChannels() = runBlocking {
+        for (mode in listOf("protected", "legacy")) {
+            val socket = DaemonSocket()
+            try {
+                socket.open(host(mode))
+                val bytes = ByteArray(400_001) { (it % 251).toByte() }
+                val file = bytes.inputStream().use { socket.uploadFile("relay.bin", "application/octet-stream", bytes.size.toLong(), it) }
+                assertEquals(bytes.size.toLong(), file.long("size"))
+                assertEquals("relay.bin", file.string("fileName"))
+            } finally { socket.close() }
+        }
+    }
     @Test fun passwordsAreRequestedInsideTheChannelAndWrongKeysOrDowngradesFail() = runBlocking {
         for((password,expected) in listOf("" to AuthFailure.PasswordRequired,"wrong" to AuthFailure.IncorrectPassword)) {
             val socket=DaemonSocket()

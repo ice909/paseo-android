@@ -11,10 +11,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -67,12 +63,12 @@ fun FilesPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, mod
     }
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { navigateUp() }, enabled = path.isNotEmpty() || openFile) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "上级目录") }
+            IconButton(onClick = { navigateUp() }, enabled = path.isNotEmpty() || openFile) { PaseoGlyph(PaseoIcons.ArrowLeft, "上级目录") }
             Text(path.ifBlank { agent.cwd.substringAfterLast('/').ifBlank { "/" } }, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
             if (openFile && file.string("kind") == "text") IconButton(onClick = {
                 draft = file.string("content"); editBase = file.toString(); editing = true
-            }, enabled = connected && !loading && !saving) { Icon(Icons.Outlined.Edit, "编辑文件") }
-            IconButton(onClick = { version++ }, enabled = connected && !editing && !loading) { Icon(Icons.Outlined.Refresh, "刷新文件") }
+            }, enabled = connected && !loading && !saving) { PaseoGlyph(PaseoIcons.Pencil, "编辑文件") }
+            IconButton(onClick = { version++ }, enabled = connected && !editing && !loading) { PaseoGlyph(PaseoIcons.RefreshCw, "刷新文件") }
         }
         if (loading || saving) LinearProgressIndicator(Modifier.fillMaxWidth())
         error?.let { ErrorMessage(it) }
@@ -87,17 +83,17 @@ fun FilesPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, mod
                     } }
                 }
             }
-            openFile && !loading -> EmptyState(Icons.Outlined.InsertDriveFile, "暂不支持预览此文件", "当前支持 UTF-8 文本文件。", Modifier.weight(1f))
+            openFile && !loading -> EmptyState(PaseoIcons.File, "暂不支持预览此文件", "当前支持 UTF-8 文本文件。", Modifier.weight(1f))
             else -> {
                 val entries = payload.obj("directory").array("entries").map { it.jsonObject }.sortedWith(compareBy<JsonObject> { it.string("kind") != "directory" }.thenBy { it.string("name").lowercase() })
-                if (entries.isEmpty() && !loading) EmptyState(Icons.Outlined.FolderOpen, "目录为空", path.ifBlank { agent.cwd }, Modifier.weight(1f))
+                if (entries.isEmpty() && !loading) EmptyState(PaseoIcons.FolderOpen, "目录为空", path.ifBlank { agent.cwd }, Modifier.weight(1f))
                 else LazyColumn(Modifier.fillMaxSize()) {
                     items(entries, key = { it.string("path") }) { entry ->
                         Surface(onClick = { path = entry.string("path"); openFile = entry.string("kind") != "directory" }, color = MaterialTheme.colorScheme.background) {
                             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Icon(if (entry.string("kind") == "directory") Icons.Outlined.FolderOpen else Icons.Outlined.Description, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                FileGlyph(entry.string("name"), entry.string("kind") == "directory")
                                 Text(entry.string("name"), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                                if (entry.string("kind") == "directory") Icon(Icons.Outlined.ChevronRight, null, Modifier.size(16.dp))
+                                if (entry.string("kind") == "directory") PaseoGlyph(PaseoIcons.ChevronRight, null, Modifier.size(16.dp))
                             }
                         }
                     }
@@ -109,7 +105,7 @@ fun FilesPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, mod
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
                 Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { if (dirty) confirmDiscard = true else editing = false }, enabled = !saving) { Icon(Icons.Outlined.Close, "关闭编辑器") }
+                    IconButton(onClick = { if (dirty) confirmDiscard = true else editing = false }, enabled = !saving) { PaseoGlyph(PaseoIcons.X, "关闭编辑器") }
                     Text(path.substringAfterLast('/'), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                     TextButton(onClick = { scope.launch {
                         saving = true; error = null
@@ -150,17 +146,18 @@ fun DiffPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, modi
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("未提交的改动 · ${files.size} 个文件", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-            IconButton(onClick = { version++ }, enabled = connected && !loading) { Icon(Icons.Outlined.Refresh, "刷新改动") }
+            IconButton(onClick = { version++ }, enabled = connected && !loading) { PaseoGlyph(PaseoIcons.RefreshCw, "刷新改动") }
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         error?.let { ErrorMessage(it) }
-        if (!loading && error == null && files.isEmpty()) EmptyState(Icons.Outlined.Difference, "工作区干净", "这里会显示主机上的未提交改动。", Modifier.weight(1f))
+        if (!loading && error == null && files.isEmpty()) EmptyState(PaseoIcons.SourceControl, "工作区干净", "这里会显示主机上的未提交改动。", Modifier.weight(1f))
         else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 20.dp)) {
             if (payload.bool("diffTooLarge")) item { ErrorMessage("部分改动过大，主机省略了详细内容。") }
             files.forEach { file ->
                 item("file:${file.string("path")}") {
                     Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Outlined.Difference, null, Modifier.size(16.dp))
+                        val change = diffFileChangeKind(file)
+                        PaseoGlyph(fileChangeIcon(change), null, Modifier.size(14.dp), tint = when (change) { "added" -> LocalPaseoPalette.current.statusSuccess; "deleted" -> LocalPaseoPalette.current.statusDanger; else -> LocalPaseoPalette.current.statusWarning })
                         Text(file.string("path"), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                         Text("+${file.long("additions") ?: 0}", color = LocalPaseoPalette.current.statusSuccess, style = MaterialTheme.typography.labelSmall)
                         Text("−${file.long("deletions") ?: 0}", color = LocalPaseoPalette.current.statusDanger, style = MaterialTheme.typography.labelSmall)
@@ -226,10 +223,10 @@ fun TerminalPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, 
         Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
                 var expanded by remember { mutableStateOf(false) }
-                TextButton(onClick = { expanded = true }) { Icon(Icons.Outlined.Terminal, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text(terminals.find { it.string("id") == selectedId }?.string("name")?.ifBlank { "终端" } ?: "文本终端"); Icon(Icons.Outlined.ExpandMore, null) }
+                TextButton(onClick = { expanded = true }) { PaseoGlyph(PaseoIcons.SquareTerminal, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text(terminals.find { it.string("id") == selectedId }?.string("name")?.ifBlank { "终端" } ?: "文本终端"); PaseoGlyph(PaseoIcons.ChevronDown, null) }
                 DropdownMenu(expanded, { expanded = false }) { terminals.forEach { terminal -> DropdownMenuItem(text = { Text(terminal.string("name").ifBlank { terminal.string("id").take(8) }) }, onClick = { selectedId = terminal.string("id"); expanded = false }) } }
             }
-            if (selectedId.isNotBlank()) IconButton(onClick = { confirmClose = true }, enabled = connected && !loading) { Icon(Icons.Outlined.Close, "关闭终端") }
+            if (selectedId.isNotBlank()) IconButton(onClick = { confirmClose = true }, enabled = connected && !loading) { PaseoGlyph(PaseoIcons.X, "关闭终端") }
             IconButton(onClick = { scope.launch {
                 loading = true
                 try {
@@ -237,11 +234,11 @@ fun TerminalPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, 
                     terminals = terminals + terminal; selectedId = terminal.string("id")
                 } catch (e: Exception) { if (e is CancellationException) throw e; error = e.message }
                 finally { loading = false }
-            } }, enabled = connected && !loading) { Icon(Icons.Outlined.Add, "新建终端") }
+            } }, enabled = connected && !loading) { PaseoGlyph(PaseoIcons.Plus, "新建终端") }
         }
         Text("文本模式 · 每秒刷新最近 300 行", Modifier.padding(start = 20.dp, bottom = 10.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         error?.let { ErrorMessage(it) }
-        if (selectedId.isBlank()) EmptyState(Icons.Outlined.Terminal, "还没有终端", "点击右上角 + 在主机上打开终端。", Modifier.weight(1f))
+        if (selectedId.isBlank()) EmptyState(PaseoIcons.SquareTerminal, "还没有终端", "点击右上角 + 在主机上打开终端。", Modifier.weight(1f))
         else {
             val lines = remember(text) { text.lines() }
             val list = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -258,7 +255,7 @@ fun TerminalPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, 
         }
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(command, { command = it }, placeholder = { Text("输入命令") }, modifier = Modifier.weight(1f), singleLine = true)
-            FilledIconButton(onClick = { input(command + "\r"); command = "" }, enabled = connected && selectedId.isNotBlank()) { Icon(Icons.AutoMirrored.Outlined.Send, "执行命令") }
+            FilledIconButton(onClick = { input(command + "\r"); command = "" }, enabled = connected && selectedId.isNotBlank()) { PaseoGlyph(PaseoIcons.CornerDownLeft, "执行命令") }
         }
     }
 }

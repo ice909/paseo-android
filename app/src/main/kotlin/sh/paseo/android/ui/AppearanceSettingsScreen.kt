@@ -7,8 +7,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,14 +32,14 @@ fun AppearanceSettingsScreen(preference: ThemePreference, onTheme: (ThemePrefere
                             modifier = Modifier.semantics { contentDescription = "主题：${preference.label}" }) {
                             ThemeLeading(preference)
                             Text(preference.label, Modifier.padding(horizontal = 10.dp))
-                            Icon(Icons.Outlined.UnfoldMore, null, Modifier.size(16.dp))
+                            PaseoGlyph(PaseoIcons.ChevronDown, null, Modifier.size(16.dp))
                         }
                         DropdownMenu(expanded, { expanded = false }, modifier = Modifier.widthIn(min = 200.dp)) {
                             ThemePreference.entries.forEach { option ->
                                 if (option == ThemePreference.ZINC) HorizontalDivider(Modifier.padding(vertical = 4.dp))
                                 DropdownMenuItem(text = { Text(option.label) },
                                     leadingIcon = { ThemeLeading(option) },
-                                    trailingIcon = { if (option == preference) Icon(Icons.Outlined.Check, "已选择", Modifier.size(18.dp)) },
+                                    trailingIcon = { if (option == preference) PaseoGlyph(PaseoIcons.Check, "已选择", Modifier.size(18.dp)) },
                                     modifier = Modifier.semantics { contentDescription = "选择主题：${option.label}" },
                                     onClick = { onTheme(option); expanded = false })
                             }
@@ -63,12 +61,12 @@ fun AppearanceSettingsScreen(preference: ThemePreference, onTheme: (ThemePrefere
 @Composable
 private fun ThemeLeading(theme: ThemePreference) {
     val icon = when (theme) {
-        ThemePreference.LIGHT -> Icons.Outlined.LightMode
-        ThemePreference.DARK -> Icons.Outlined.DarkMode
-        ThemePreference.AUTO -> Icons.Outlined.DesktopWindows
+        ThemePreference.LIGHT -> PaseoIcons.Sun
+        ThemePreference.DARK -> PaseoIcons.Moon
+        ThemePreference.AUTO -> PaseoIcons.Monitor
         else -> null
     }
-    if (icon != null) Icon(icon, null, Modifier.size(18.dp), tint = LocalPaseoPalette.current.foregroundMuted)
+    if (icon != null) PaseoGlyph(icon, null, Modifier.size(18.dp), tint = LocalPaseoPalette.current.foregroundMuted)
     else Box(Modifier.size(16.dp).background(theme.swatch!!, CircleShape).border(1.dp, LocalPaseoPalette.current.border, CircleShape))
 }
 
@@ -94,7 +92,7 @@ private fun AppearancePreview() {
                     modifier = Modifier.fillMaxWidth().background(palette.surface2, RoundedCornerShape(6.dp)).padding(10.dp))
                 Text("已完成修改，所有检查通过。", fontSize = 12.sp)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Outlined.CheckCircle, null, Modifier.size(13.dp), tint = palette.statusSuccess)
+                    PaseoGlyph(PaseoIcons.CircleCheck, null, Modifier.size(13.dp), tint = palette.statusSuccess)
                     Text("更新文件", fontSize = 11.sp, color = palette.foregroundMuted)
                     Text("+12", fontSize = 11.sp, color = palette.statusSuccess)
                     Text("−3", fontSize = 11.sp, color = palette.statusDanger)

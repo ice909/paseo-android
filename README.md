@@ -16,16 +16,22 @@
 - 提供方 / 模型 / 模式选择，已有代理的模型和模式切换，斜杠命令建议。
 - 使用创建请求幂等键和创建状态回执；同一草稿重试保留键，编辑配置后生成新键。现代创建协议用于支持 `creationLifecycle` 的 daemon，旧版提供基本创建兼容路径。
 - 历史消息分页、实时输出、工具调用及结果、思考过程、任务清单、权限允许 / 拒绝、交互式单选 / 多选 / 文本提问、停止执行。
-- 原生 Markdown 基础排版、可选择文本、可复制代码块。
+- 官方默认 steer、interrupt / queue 发送偏好、运行中长按发送切换行为、队列编辑 / 立即发送 / 空闲时顺序发送；立即清空输入和乐观消息、失败草稿恢复、同一消息 ID 重试。
+- 按主机和代理隔离的加密持久草稿与未确认发送记录、展开编辑器、手机回车换行、斜杠命令和 @ 文件建议、模型 / 模式 / 思考强度 / 动态特性切换。
+- 图片粘贴 / 拖放和文件附件（单文件 50 MiB 上限）、图片缩放预览、Issue / PR 上下文附件、按代理能力回退对话 / 文件、已完成回合折叠与消息复制。
+- 官方 daemon 流式语音转写和语音对话协议：麦克风权限、取消、转写重试、文本追加 / 发送、静音、打断、播放确认；依赖主机启用对应语音服务。
+- 原生 Markdown 基础排版、链接、可选择文本、可复制代码块。
 - 目录浏览、UTF-8 文本查看与编辑，使用主机文件版本进行并发修改检查。
 - 未提交 Git diff 查看。
 - 文本模式终端：选择 / 创建 / 关闭终端、发送命令、Ctrl+C / Esc / Tab / Enter、每秒抓取最近 300 行。
+- 未添加主机时使用官方欢迎页、Paseo 标志和 Lucide 图标；扫码、直接连接和配对链接三个入口均可用。配对弹层按官方尺寸、色值与输入框样式呈现，验证成功后保存主机。
+- 全应用图标使用官方同版 Lucide 与 Paseo 自定义资源，内置 9 种代理标志和 54 种文件类型图标；文件图标保留官方 OKLab 调色。
 - 官方全部 8 个内置主题：Light、Dark、系统、Zinc、Midnight、Claude、Ghostty、纯黑；侧栏「设置 → 外观」即时切换并在本机保存。系统模式跟随设备深浅色；侧栏、聊天、diff、终端、弹窗及系统栏同步切换。
 - 系统返回、键盘避让。
 
 ## 当前边界
 
-二维码扫描、推送通知、语音、附件、完整 VT 终端、插件 UI、归档历史入口、日程、完整工作树与 PR 管理尚未实现。工作树目前仅支持从当前分支创建；Git 改动面板目前仅展示未提交改动。Markdown 暂不解析完整表格、图片和数学公式。
+推送通知、完整 VT 终端、插件 UI、归档历史入口、日程、完整工作树与 PR 管理尚未实现。工作树目前仅支持从当前分支创建；Git 改动面板目前仅展示未提交改动。Markdown 暂不解析完整表格、图片和数学公式。
 
 协议根据上述官方源码版本实现。已使用隔离的官方 daemon 0.13.2 及其真实 `#offer=` 链接，经公共中继验证原生 Kotlin 网络层的工作区读取、文件读写与终端操作；聊天流、审批、提问和界面流程使用协议模拟服务验证。尚未使用用户真实 AI 代理执行任务；不同 daemon 版本兼容性和低端设备性能仍需实机验证。
 
@@ -148,6 +154,16 @@ python3 tools/android_theme_smoke.py --reset --with-host
 
 仅检查主题、不连接模拟主机时省略 `--with-host`。截图输出在 `app/build/theme-smoke/`。
 
+欢迎页回归（同样使用专用模拟器，正常流程需要 6768 模拟服务）：
+
+```sh
+python3 tools/android_welcome_smoke.py --reset
+# 单独检查窄屏与横屏，跳过连接与相机权限流程
+python3 tools/android_welcome_smoke.py --reset --layout-only
+```
+
+覆盖欢迎页文案 / 标志 / 三种入口、主题设置返回、相机权限拒绝与重试、单个配对输入框、无效链接错误、直连表单与连接成功。截图输出在 `app/build/welcome-smoke/`。
+
 `--reset` 会清除模拟器中本应用的数据。模拟主机密码为 `test`，不执行真实 shell 命令。截图输出在 `app/build/smoke/`。
 
 官方加密库互通与 Android 配对 UI 回归可用下列工具（需要已安装官方 Paseo CLI，使用其依赖，不启动真实 AI）：
@@ -179,3 +195,5 @@ PASEO_SMOKE_URL=ws://127.0.0.1:6769/ws run_gradle :core:test --tests '*RealDaemo
 - [Jetpack Compose 项目配置](https://developer.android.com/develop/ui/compose/setup)
 
 Apache-2.0，详见 `LICENSE` 和 `NOTICE`。
+
+全应用图标验证：先以 `python3 tools/mock_daemon.py --port 6768 --icon-gallery` 启动模拟服务，再串行运行 `python3 tools/android_smoke.py --reset` 和 `python3 tools/android_icon_smoke.py`。后者检查侧栏、代理标志、diff、彩色文件图标（含 Kotlin 渐变）、主题菜单和终端；截图位于 `app/build/icon-smoke/`。

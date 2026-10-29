@@ -8,10 +8,13 @@ import kotlinx.serialization.json.*
 
 /** One active host, one catalog subscription, and one viewed timeline. No Android dependencies. */
 class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
+    companion object { const val PCM_FORMAT = "audio/pcm;rate=16000;bits=16" }
     private val dispatcher = Dispatchers.Default.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val _state = MutableStateFlow(PaseoState())
     val state = _state.asStateFlow()
+    private val _events = MutableSharedFlow<JsonObject>(extraBufferCapacity = 64)
+    val events = _events.asSharedFlow()
     private val buffer = TimelineBuffer()
     private var connectionJob: Job? = null
     private var timelineJob: Job? = null
@@ -22,7 +25,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     private var creationLifecycle = false
 
     init { scope.launch { socket.messages.collect { message ->
-        try { handle(message) } catch (error: Exception) { report(error) }
+        try { handle(message); _events.emit(message) } catch (error: Exception) { report(error) }
     } } }
 
     fun connect(host: Host) {
@@ -44,7 +47,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     workspaceSubscription = null
                     val info = socket.open(host)
                     creationLifecycle = info.obj("features").bool("creationLifecycle")
-                    _state.update { it.copy(connection = ConnectionStatus.Connected, serverName = info.string("hostname").ifBlank { host.name }, error = null) }
+                    _state.update { it.copy(connection = ConnectionStatus.Connected, serverName = info.string("hostname").ifBlank { host.name }, features = info.obj("features"), capabilities = info.obj("capabilities"), error = null) }
                     coroutineScope {
                         launch {
                             fetchAgents(subscribe = true)
@@ -257,13 +260,44 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     suspend fun commands(id: String): List<JsonObject> = socket.request("list_commands_request", "agentId" to id).array("commands").map { it.jsonObject }
     suspend fun directorySuggestions(query: String): List<JsonObject> = socket.request("directory_suggestions_request",
         "query" to query, "includeDirectories" to true, "includeFiles" to false, "limit" to 8).array("entries").map { it.jsonObject }
+    suspend fun forgeSearch(cwd: String, query: String): List<JsonObject> = socket.request(
+        if (state.value.features.bool("forgeSearch")) "forge.search.request" else "github_search_request",
+        "cwd" to cwd, "query" to query, "limit" to 20).array("items").map { it.jsonObject }
+    suspend fun fileSuggestions(cwd: String, query: String): List<JsonObject> = socket.request("directory_suggestions_request",
+        "cwd" to cwd, "query" to query, "includeFiles" to true, "includeDirectories" to true, "matchMode" to "fuzzy", "limit" to 8).array("entries").map { it.jsonObject }
     suspend fun models(provider: String, cwd: String): List<ModelOption> {
         val result = socket.request("list_provider_models_request", "provider" to provider, "cwd" to cwd.ifBlank { null })
         return result.array("models").map { wireJson.decodeFromJsonElement<ModelOption>(it) }
     }
-    suspend fun sendMessage(agentId: String, text: String, messageId: String) {
-        require(text.isNotBlank())
-        socket.request("send_agent_message_request", "agentId" to agentId, "text" to text, "messageId" to messageId)
+    suspend fun sendMessage(agentId: String, text: String, messageId: String, behavior: String = "steer",
+        images: List<JsonObject> = emptyList(), attachments: List<JsonObject> = emptyList(), expectedHostId: String? = null): String = withContext(dispatcher) {
+        check(expectedHostId == null || state.value.host?.id == expectedHostId) { "当前主机已切换，请返回原会话重试" }
+        require(text.isNotBlank() || images.isNotEmpty() || attachments.isNotEmpty())
+        require(behavior in setOf("steer", "interrupt"))
+        val result = socket.request("send_agent_message_request", "agentId" to agentId, "text" to text,
+            "messageId" to messageId, "activeTurnBehavior" to behavior, "images" to images, "attachments" to attachments)
+        if (result.string("deliveryStatus") == "queued") "queued" else "accepted"
+    }
+    suspend fun setFeature(id: String, feature: String, value: JsonElement) { socket.request("set_agent_feature_request", "agentId" to id, "featureId" to feature, "value" to value) }
+    suspend fun setThinking(id: String, option: String?) { socket.request("set_agent_thinking_request", "agentId" to id, "thinkingOptionId" to (option?.let(::JsonPrimitive) ?: JsonNull)) }
+    suspend fun rewindAgent(id: String, messageId: String, mode: String) {
+        require(mode in setOf("conversation", "files", "both"))
+        val result = socket.request("agent.rewind.request", "agentId" to id, "messageId" to messageId, "mode" to mode)
+        check(result.bool("ok")) { result.string("error").ifBlank { "回退失败" } }
+        if (mode != "files" && state.value.selectedAgentId == id) selectAgent(id)
+    }
+    fun startDictation(id: String) = socket.send("dictation_stream_start", "dictationId" to id, "format" to PCM_FORMAT)
+    fun dictationChunk(id: String, seq: Int, bytes: ByteArray) = socket.send("dictation_stream_chunk", "dictationId" to id, "seq" to seq, "audio" to b64(bytes), "format" to PCM_FORMAT)
+    fun finishDictation(id: String, finalSeq: Int) = socket.send("dictation_stream_finish", "dictationId" to id, "finalSeq" to finalSeq)
+    fun cancelDictation(id: String) = socket.send("dictation_stream_cancel", "dictationId" to id)
+    suspend fun setVoiceMode(enabled: Boolean, id: String) { socket.request("set_voice_mode", "enabled" to enabled, "agentId" to id) }
+    fun voiceChunk(bytes: ByteArray, last: Boolean = false) = socket.send("voice_audio_chunk", "audio" to b64(bytes), "format" to PCM_FORMAT, "isLast" to last)
+    fun audioPlayed(id: String) = socket.send("audio_played", "id" to id)
+    fun abortVoice() = socket.send("abort_request")
+    suspend fun uploadFile(attachment: ChatAttachment, expectedHostId: String): JsonObject = withContext(dispatcher) {
+        check(state.value.host?.id == expectedHostId) { "当前主机已切换" }
+        val generation = socket.connectionToken()
+        withContext(Dispatchers.IO) { java.io.File(attachment.localPath).inputStream().use { socket.uploadFile(attachment.name, attachment.mimeType, attachment.size, it, generation) } }
     }
     suspend fun cancelAgent(agentId: String) { socket.request("cancel_agent_request", "agentId" to agentId) }
     suspend fun archiveAgent(agentId: String) = withContext(dispatcher) {
@@ -348,7 +382,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                         _state.update { current -> current.copy(agents = current.agents.map {
                             if (it.id != agentId) it else it.copy(status = when (event.string("type")) {
                                 "turn_started" -> "running"; "turn_failed" -> "error"; else -> "idle"
-                            })
+                            }, activeTurn = null, activeTurnId = event.string("turnId").takeIf { _ -> event.string("type") == "turn_started" })
                         }) }
                         if (agentId == state.value.selectedAgentId) publishTimeline()
                     }

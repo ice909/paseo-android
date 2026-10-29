@@ -51,15 +51,20 @@ data class Agent(
     val title: String? = null, val status: String = "idle",
     val updatedAt: String = "", val archivedAt: String? = null,
     val pendingPermissions: List<PermissionRequest> = emptyList(),
-    val lastError: String? = null,
+    val lastError: String? = null, val activeTurnId: String? = null,
+    val activeTurn: JsonObject? = null,
+    val features: List<JsonObject> = emptyList(),
+    val capabilities: JsonObject = jsonObject(), val thinkingOptionId: String? = null,
 ) {
     val displayTitle: String get() = title?.takeIf { it.isNotBlank() } ?: "新会话"
-    val running: Boolean get() = status in setOf("running", "initializing")
+    val currentTurnId: String get() = activeTurn?.string("turnId").orEmpty().ifBlank { activeTurnId.orEmpty() }
+    val running: Boolean get() = activeTurn != null || status in setOf("running", "initializing")
 }
 @Serializable
 data class Provider(val provider: String, val available: Boolean = false, val error: String? = null)
 @Serializable
-data class ModelOption(val id: String, val label: String = "", val name: String = "") {
+data class ModelOption(val id: String, val label: String = "", val name: String = "",
+    val thinkingOptions: List<ModeOption> = emptyList(), val defaultThinkingOptionId: String? = null) {
     val displayName: String get() = label.ifBlank { name.ifBlank { id } }
 }
 @Serializable
@@ -88,7 +93,8 @@ data class WorkspaceContext(val id: String, val cwd: String)
 data class TimelineRow(
     val key: String, val type: String, val text: String = "", val title: String = "",
     val status: String = "", val detail: JsonObject = jsonObject(),
-    val messageId: String = "", val turnId: String = "",
+    val messageId: String = "", val turnId: String = "", val timestamp: String = "",
+    val images: List<JsonObject> = emptyList(), val attachments: List<JsonObject> = emptyList(),
 )
 data class TimelinePage(
     val epoch: String, val startSeq: Long?, val endSeq: Long?, val hasOlder: Boolean,
@@ -97,7 +103,7 @@ enum class ConnectionStatus { Disconnected, Connecting, Connected, Reconnecting 
 data class PaseoState(
     val host: Host? = null,
     val connection: ConnectionStatus = ConnectionStatus.Disconnected,
-    val serverName: String = "",
+    val serverName: String = "", val features: JsonObject = jsonObject(), val capabilities: JsonObject = jsonObject(),
     val agents: List<Agent> = emptyList(),
     val nextAgentCursor: String? = null,
     val providers: List<Provider> = emptyList(),

@@ -3,8 +3,6 @@ package sh.paseo.android.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -72,7 +70,7 @@ fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace
                 OutlinedTextField(cwd, { cwd = it }, label = { Text("工作目录") }, placeholder = { Text("/home/me/project") }, singleLine = true, enabled = !submitted,
                     modifier = Modifier.fillMaxWidth(), supportingText = { Text("填写主机上的绝对路径") })
                 if (!submitted && suggestions.isNotEmpty()) Column {
-                    suggestions.take(3).forEach { path -> TextButton(onClick = { cwd = path }) { Icon(Icons.Outlined.FolderOpen, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(path) } }
+                    suggestions.take(3).forEach { path -> TextButton(onClick = { cwd = path }) { PaseoGlyph(PaseoIcons.FolderOpen, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(path) } }
                 }
                 if (project?.projectKind == "git") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -89,11 +87,11 @@ fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace
         }
         }
         MessageComposer(value = prompt, onValueChange = { if (!submitted) prompt = it }, placeholder = "你想完成什么？",
-            enabled = !submitted, canSend = state.connected && provider.isNotBlank() && cwd.startsWith('/') && !creating,
+            returnIcon = true, enabled = !submitted, canSend = state.connected && provider.isNotBlank() && cwd.startsWith('/') && !creating,
             sending = creating, onSend = { submitted = true; vm.create(provider, cwd, model, mode, prompt, title, key, workspace, projectId.ifBlank { null }, worktree, branch, onCreated) },
             sendDescription = if (submitted && !creating) "重试创建" else if (workspace == null) "创建工作区" else "创建代理",
             options = {
-                ComposerChoice(provider.ifBlank { "选择代理" }, available.map { it.provider to it.provider }, enabled = !submitted) { provider = it; model = ""; mode = "" }
+                ComposerChoice(provider.ifBlank { "选择代理" }, available.map { it.provider to it.provider }, enabled = !submitted, icon = PaseoIcons.provider(provider)) { provider = it; model = ""; mode = "" }
                 ComposerChoice(models.find { it.id == model }?.displayName ?: "默认模型", listOf("" to "默认模型") + models.map { it.id to it.displayName }, enabled = !submitted) { model = it }
                 if (modes.isNotEmpty()) ComposerChoice(modes.find { it.id == mode }?.displayName ?: "默认模式", listOf("" to "默认模式") + modes.map { it.id to it.displayName }, enabled = !submitted) { mode = it }
             })

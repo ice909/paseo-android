@@ -6,8 +6,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,15 +42,15 @@ fun WorkspaceSidebar(state: PaseoState, onNew: (String?) -> Unit, onOpen: (Works
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 20.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("paseo", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            IconButton(onClick = onRefresh, enabled = state.connected) { Icon(Icons.Outlined.Refresh, "刷新工作区", Modifier.size(19.dp)) }
+            IconButton(onClick = onRefresh, enabled = state.connected) { PaseoGlyph(PaseoIcons.RefreshCw, "刷新工作区", Modifier.size(19.dp)) }
         }
-        SidebarAction("新建工作区", Icons.Outlined.Add) { onNew(null) }
-        SidebarAction("搜索工作区", Icons.Outlined.Search) { search = !search; if (!search) query = "" }
+        SidebarAction("新建工作区", PaseoIcons.Plus) { onNew(null) }
+        SidebarAction("搜索工作区", PaseoIcons.Search) { search = !search; if (!search) query = "" }
         if (search) OutlinedTextField(query, { query = it }, placeholder = { Text("搜索项目或工作区") }, singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp))
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 22.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("工作区", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            IconButton(onClick = { onNew(null) }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.CreateNewFolder, "添加项目", Modifier.size(17.dp)) }
+            IconButton(onClick = { onNew(null) }, modifier = Modifier.size(28.dp)) { PaseoGlyph(PaseoIcons.FolderPlus, "添加项目", Modifier.size(17.dp)) }
         }
         if (!state.catalogLoaded) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             if (state.connected) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -63,10 +61,10 @@ fun WorkspaceSidebar(state: PaseoState, onNew: (String?) -> Unit, onOpen: (Works
                 if (workspaces.isNotEmpty() || query.isBlank()) {
                     item("project:${project.projectId}") {
                         Row(Modifier.fillMaxWidth().clickable { collapsed[project.projectId] = collapsed[project.projectId] != true }.padding(start = 8.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (collapsed[project.projectId] == true) Icons.Outlined.ChevronRight else Icons.Outlined.ExpandMore, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Icon(Icons.Outlined.FolderOpen, null, Modifier.padding(horizontal = 7.dp).size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            PaseoGlyph(if (collapsed[project.projectId] == true) PaseoIcons.ChevronRight else PaseoIcons.ChevronDown, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            PaseoGlyph(PaseoIcons.FolderOpen, null, Modifier.padding(horizontal = 7.dp).size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(project.projectDisplayName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            IconButton(onClick = { onNew(project.projectId) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Outlined.Add, "在 ${project.projectDisplayName} 新建工作区", Modifier.size(18.dp)) }
+                            IconButton(onClick = { onNew(project.projectId) }, modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Plus, "在 ${project.projectDisplayName} 新建工作区", Modifier.size(18.dp)) }
                         }
                     }
                     if (collapsed[project.projectId] != true) {
@@ -74,9 +72,9 @@ fun WorkspaceSidebar(state: PaseoState, onNew: (String?) -> Unit, onOpen: (Works
                             val selected = workspace.id == state.selectedWorkspaceId
                             Surface(onClick = { onOpen(workspace) }, shape = RoundedCornerShape(7.dp), color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else sidebarColor()) {
                                 Row(Modifier.fillMaxWidth().padding(start = 39.dp, end = 12.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Icon(if (workspace.workspaceKind == "worktree") Icons.Outlined.CallSplit else Icons.Outlined.FolderOpen, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    PaseoGlyph(when (workspace.workspaceKind) { "worktree" -> PaseoIcons.FolderGit2; "local_checkout" -> PaseoIcons.Monitor; else -> PaseoIcons.Folder }, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text(workspace.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (workspace.pinnedAt != null) Icon(Icons.Outlined.PushPin, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (workspace.pinnedAt != null) PaseoGlyph(PaseoIcons.Pin, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                     StatusDot(workspace.status == "needs_input", workspace.status == "running", workspace.status == "failed")
                                 }
                             }
@@ -93,15 +91,15 @@ fun WorkspaceSidebar(state: PaseoState, onNew: (String?) -> Unit, onOpen: (Works
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         ConnectionStrip(state, onHosts)
-        SidebarAction("管理主机", Icons.Outlined.Dns, onHosts)
-        SidebarAction("设置", Icons.Outlined.Settings, onAppearance)
+        SidebarAction("管理主机", PaseoIcons.Server, onHosts)
+        SidebarAction("设置", PaseoIcons.Settings, onAppearance)
     }
 }
 
 @Composable
-private fun SidebarAction(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+private fun SidebarAction(text: String, icon: Int, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Icon(icon, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        PaseoGlyph(icon, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }

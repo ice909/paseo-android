@@ -1,0 +1,6 @@
+<!-- Imported from the pinned official Paseo app. See NOTICE and tools/sync_official_icons.py. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="12dp" android:viewportWidth="16" android:viewportHeight="12">
+    <path android:pathData="M0.75,0.0H15.25A0.75,0.75 0 0 1 16.0,0.75V0.75A0.75,0.75 0 0 1 15.25,1.5H0.75A0.75,0.75 0 0 1 0.0,0.75V0.75A0.75,0.75 0 0 1 0.75,0.0Z" android:fillColor="#FF000000" />
+    <path android:pathData="M0.75,5.25H15.25A0.75,0.75 0 0 1 16.0,6.0V6.0A0.75,0.75 0 0 1 15.25,6.75H0.75A0.75,0.75 0 0 1 0.0,6.0V6.0A0.75,0.75 0 0 1 0.75,5.25Z" android:fillColor="#FF000000" />
+    <path android:pathData="M0.75,10.5H7.25A0.75,0.75 0 0 1 8.0,11.25V11.25A0.75,0.75 0 0 1 7.25,12.0H0.75A0.75,0.75 0 0 1 0.0,11.25V11.25A0.75,0.75 0 0 1 0.75,10.5Z" android:fillColor="#FF000000" />
+</vector>

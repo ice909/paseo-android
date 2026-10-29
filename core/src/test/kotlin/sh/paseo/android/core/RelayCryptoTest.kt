@@ -34,6 +34,13 @@ class RelayCryptoTest {
         assertTrue(runCatching { ProtectedRecord.decode(record.copyOf(record.size - 1), NoiseCipher(key.copyOf())) }.isFailure)
         assertArrayEquals(byteArrayOf(), ProtectedRecord.decode(ProtectedRecord.encode(byteArrayOf(), NoiseCipher(key.copyOf())), NoiseCipher(key.copyOf())).data)
     }
+    @Test fun binaryProtectedRecordsKeepTheKindAndBytes() {
+        val key = ByteArray(32) { 42 }
+        val bytes = ByteArray(131072) { (it % 251).toByte() }
+        val frame = ProtectedRecord.decode(ProtectedRecord.encode(bytes, NoiseCipher(key.copyOf()), binary = true), NoiseCipher(key.copyOf()))
+        assertTrue(frame.binary)
+        assertArrayEquals(bytes, frame.data)
+    }
     @Test fun legacyNaClBoxSupportsAuthenticatedRoundTrips() {
         val alice = ByteArray(32) { (it + 1).toByte() }; val bob = ByteArray(32) { (it + 80).toByte() }
         val a = RelayCrypto.boxKey(alice, RelayCrypto.publicKey(bob)); val b = RelayCrypto.boxKey(bob, RelayCrypto.publicKey(alice))

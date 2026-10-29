@@ -10,6 +10,9 @@ import kotlinx.coroutines.sync.withLock
 import sh.paseo.android.appearance.AppearanceStore
 import sh.paseo.android.appearance.ThemePreference
 import sh.paseo.android.core.*
+import sh.paseo.android.data.ConversationAudio
+import sh.paseo.android.data.ChatStore
+import sh.paseo.android.data.ChatAttachments
 import sh.paseo.android.data.HostStore
 import sh.paseo.android.data.LocalNetworkAccess
 
@@ -28,9 +31,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val screen = MutableStateFlow("hosts")
     val initialized = MutableStateFlow(false)
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    val sending = MutableStateFlow(false)
     val creating = MutableStateFlow(false)
-    val drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     val localNetworkPermissionRequest = MutableStateFlow<Host?>(null)
     private var connectionRequestJob: Job? = null
     private var networkPermissionResult: CompletableDeferred<Boolean>? = null
@@ -39,9 +40,77 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val pairingBusy = MutableStateFlow(false)
     val pairingError = MutableStateFlow<String?>(null)
     val pairingPasswordNeeded = MutableStateFlow(false)
-    private val messageIds = mutableMapOf<String, Pair<String, String>>()
+    private val chatStore = ChatStore(application)
+    val sendBehavior = MutableStateFlow(chatStore.behavior)
+    val collapseTurns = MutableStateFlow(chatStore.collapseTurns)
+    fun setCollapseTurns(value: Boolean) { collapseTurns.value = value; chatStore.collapseTurns = value }
+    val modEnter = MutableStateFlow(chatStore.modEnter)
+    private val uploadedAttachments = mutableMapOf<Pair<String, String>, kotlinx.serialization.json.JsonObject>()
+    private fun conversationMemory() = conversations.sessions.value.mapValues { ConversationMemory(it.value.draft, it.value.sentAttachments, it.value.optimistic, it.value.failed) }
+    val conversations: ConversationController = ConversationController(viewModelScope, sendMessage = { key, message, behavior ->
+        // Persist the outbox before any network effect; canonical echoes clear it on reconnect.
+        chatStore.save(conversationMemory())
+        val images = mutableListOf<kotlinx.serialization.json.JsonObject>()
+        val attachments = mutableListOf<kotlinx.serialization.json.JsonObject>()
+        for (attachment in message.draft.attachments) {
+            when {
+                attachment.isImage -> images += ChatAttachments.encodeImage(attachment)
+                attachment.payload != null -> attachments += requireNotNull(attachment.payload)
+                else -> {
+                    val cacheKey = key.hostId to attachment.id
+                    attachments += uploadedAttachments[cacheKey] ?: repository.uploadFile(attachment, key.hostId).also { uploadedAttachments[cacheKey] = it }
+                }
+            }
+        }
+        repository.sendMessage(key.agentId, message.draft.text, message.id, behavior, images, attachments, key.hostId)
+    }, cancelAgent = { key ->
+        check(state.value.host?.id == key.hostId) { "当前主机已切换" }
+        repository.cancelAgent(key.agentId)
+    }).apply { behavior = sendBehavior.value }
+    val audio = ConversationAudio(application, viewModelScope, repository) { key, transcript, send ->
+        if (transcript.isNotBlank()) {
+            val current = conversations.session(key).draft.text
+            conversations.setDraft(key, current + (if (current.isNotEmpty() && !current.last().isWhitespace()) " " else "") + transcript.trim())
+            if (send) conversations.send(key)
+        }
+    }
+    fun setSendBehavior(value: SendBehavior) { sendBehavior.value = value; conversations.behavior = value; chatStore.behavior = value }
+    fun setModEnter(value: Boolean) { modEnter.value = value; chatStore.modEnter = value }
+    fun conversationKey(id: String): ConversationKey? = state.value.host?.let { ConversationKey(it.id, id) }
+    val importingAttachments = MutableStateFlow<Set<ConversationKey>>(emptySet())
+    private val attachmentImports = mutableMapOf<ConversationKey, Job>()
+    fun attachFiles(key: ConversationKey, uris: List<android.net.Uri>) {
+        importingAttachments.update { it + key }
+        val previous = attachmentImports[key]
+        val job = action {
+            previous?.join()
+            val imported = mutableListOf<ChatAttachment>()
+            try { uris.forEach { imported += ChatAttachments.import(getApplication(), it) } }
+            finally { if (imported.isNotEmpty()) conversations.attach(key, imported) }
+        }
+        attachmentImports[key] = job
+        job.invokeOnCompletion {
+            if (attachmentImports[key] === job) { attachmentImports.remove(key); importingAttachments.update { it - key } }
+        }
+    }
+    fun rewind(key: ConversationKey, row: TimelineRow, mode: String) = action {
+        check(state.value.host?.id == key.hostId) { "当前主机已切换" }
+        repository.rewindAgent(key.agentId, row.messageId, mode)
+        if (mode != "files") conversations.setDraft(key, row.text)
+    }
 
     init {
+        viewModelScope.launch { state.collect(conversations::update) }
+        viewModelScope.launch {
+            try { conversations.restoreMemory(chatStore.load()) }
+            catch (error: Exception) { notices.emit("无法读取草稿：${error.message}") }
+            conversations.sessions.map { sessions -> sessions.mapValues { ConversationMemory(it.value.draft, it.value.sentAttachments, it.value.optimistic, it.value.failed) } }.distinctUntilChanged().collectLatest { drafts ->
+                delay(250)
+                try { chatStore.save(drafts) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { notices.emit("草稿保存失败：${error.message}") }
+            }
+        }
         viewModelScope.launch {
             try {
                 val saved = store.load()
@@ -123,28 +192,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteHost(host: Host) = action {
         val updated = hosts.value.filterNot { it.id == host.id }
         storageMutex.withLock { store.save(updated, state.value.host?.id?.takeUnless { it == host.id }); hosts.value = updated }
+        conversations.forgetHost(host.id)
         if (state.value.host?.id == host.id) { repository.disconnect(); screen.value = "hosts" }
     }
     private suspend fun persist(id: String?) = storageMutex.withLock { store.save(hosts.value, id) }
     fun openWorkspace(workspace: Workspace) { repository.openWorkspace(workspace); screen.value = "chat" }
     fun openAgent(agent: Agent) { repository.selectAgent(agent.id); screen.value = "chat" }
     fun backToSessions() { repository.leaveAgent(); screen.value = "sessions" }
-    fun setDraft(id: String, text: String) { drafts.update { it + (id to text) } }
-    fun send() {
-        val agentId = state.value.selectedAgentId ?: return
-        val text = drafts.value[agentId].orEmpty()
-        if (text.isBlank() || sending.value) return
-        // Reuse the deduplication ID if the receipt was lost and the user retries.
-        val id = messageIds[agentId]?.takeIf { it.first == text }?.second ?: newId()
-        messageIds[agentId] = text to id
-        sending.value = true
-        action {
-            try {
-                repository.sendMessage(agentId, text, id)
-                if (drafts.value[agentId] == text) setDraft(agentId, "")
-                messageIds.remove(agentId)
-            } finally { sending.value = false }
-        }
+    fun setDraft(id: String, text: String) { conversationKey(id)?.let { conversations.setDraft(it, text) } }
+    fun send(alternate: Boolean = false) {
+        val id = state.value.selectedAgentId ?: return
+        conversationKey(id)?.let { conversations.send(it, alternate) }
     }
     fun create(provider: String, cwd: String, model: String, mode: String, prompt: String, title: String,
         key: String, workspace: Workspace?, projectId: String?, worktree: Boolean, branch: String, onCreated: () -> Unit) {
@@ -165,5 +223,5 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) { notices.emit(error.message ?: "操作失败") }
     }
-    override fun onCleared() { repository.close() }
+    override fun onCleared() { audio.cancel(); repository.close() }
 }

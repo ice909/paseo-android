@@ -5,7 +5,7 @@ import kotlinx.serialization.json.*
 
 /** Canonical sequence numbers make history/live overlap and reconnect replay idempotent. */
 class TimelineBuffer {
-    private data class Entry(val seq: Long, val item: JsonObject, val turnId: String)
+    private data class Entry(val seq: Long, val item: JsonObject, val turnId: String, val timestamp: String)
     private val entries = TreeMap<Long, Entry>()
     private val projected = mutableListOf<TimelineRow>()
     private val tools = mutableMapOf<String, Int>()
@@ -33,7 +33,7 @@ class TimelineBuffer {
         payload.array("entries").forEach { element ->
             val row = element.jsonObject
             val seq = row.long("seqStart") ?: return@forEach
-            entries[seq] = Entry(seq, row.obj("item"), row.string("turnId"))
+            entries[seq] = Entry(seq, row.obj("item"), row.string("turnId"), row.string("timestamp"))
         }
         if (direction != "after") {
             startSeq = payload.obj("startCursor").long("seq")
@@ -48,7 +48,7 @@ class TimelineBuffer {
         if (epoch.isEmpty()) epoch = incomingEpoch
         val event = payload.obj("event")
         val seq = payload.long("seq") ?: ((endSeq ?: -1) + 1)
-        val entry = Entry(seq, event.obj("item"), event.string("turnId"))
+        val entry = Entry(seq, event.obj("item"), event.string("turnId"), payload.string("timestamp"))
         if (entries[seq] == entry) return false
         if (renderedThrough?.let { seq <= it } == true) rebuild = true
         entries[seq] = entry
@@ -84,7 +84,9 @@ class TimelineBuffer {
                 key = "$epoch:$seq", type = type, text = text.ifEmpty { item.string("message") },
                 title = item.string("name"), status = item.string("status"),
                 detail = if (type == "todo") item else item.obj("detail"),
-                messageId = messageId, turnId = entry.turnId,
+                messageId = messageId, turnId = entry.turnId, timestamp = entry.timestamp,
+                images = item.array("images").mapNotNull { it as? JsonObject },
+                attachments = item.array("attachments").mapNotNull { it as? JsonObject },
             )
             if (type == "tool_call") {
                 val identity = "${entry.turnId}:${item.string("callId")}"

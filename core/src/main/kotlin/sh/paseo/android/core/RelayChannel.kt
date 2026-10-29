@@ -77,6 +77,13 @@ internal class RelayChannel(private val offer: RelayOffer) {
         require(encoded.length <= MAX_RELAY_WIRE_BYTES) { "Message too large" }
         return encoded
     }
+    @Synchronized fun encryptBinary(bytes: ByteArray): Pair<Boolean, ByteArray> {
+        check(open && !closed) { "Encrypted channel not ready" }
+        require(bytes.size <= 256 * 1024) { "Binary frame too large" }
+        check(protected || binaryCiphertext) { "此旧版主机不支持二进制附件，请升级主机" }
+        val wire = if (protected) ProtectedRecord.encode(bytes, sender!!, binary = true) else RelayCrypto.boxEncrypt(legacyKey, bytes)
+        return binaryCiphertext to if (binaryCiphertext) wire else b64(wire).toByteArray()
+    }
     @Synchronized fun close() {
         closed = true; open = false
         sender?.clear(); receiver?.clear(); noise.close(); legacyKey.fill(0); legacySecret.fill(0)
@@ -86,7 +93,7 @@ internal class RelayChannel(private val offer: RelayOffer) {
 internal object ProtectedRecord {
     private fun chunks(size: Int) = maxOf(1, (size + CHUNK_DATA - 1) / CHUNK_DATA)
     private fun length(size: Int): Long = size.toLong() + chunks(size) * 24L
-    fun encode(data: ByteArray, cipher: NoiseCipher): ByteArray {
+    fun encode(data: ByteArray, cipher: NoiseCipher, binary: Boolean = false): ByteArray {
         val wire = length(data.size)
         require(wire <= MAX_RELAY_WIRE_BYTES) { "Message too large" }
         val out = ByteBuffer.allocate(wire.toInt())
@@ -94,7 +101,7 @@ internal object ProtectedRecord {
             val start = i * CHUNK_DATA
             val size = minOf(CHUNK_DATA, data.size - start)
             val flags = (if (i == 0) 1 else 0) or (if (i == chunks(data.size) - 1) 2 else 0)
-            val plain = ByteBuffer.allocate(6 + size).put(0).put(flags.toByte()).putInt(data.size).put(data, start, size).array()
+            val plain = ByteBuffer.allocate(6 + size).put(if (binary) 1.toByte() else 0.toByte()).put(flags.toByte()).putInt(data.size).put(data, start, size).array()
             val encrypted = cipher.encrypt(byteArrayOf(), plain)
             out.putShort(encrypted.size.toShort()).put(encrypted)
         }

@@ -34,7 +34,7 @@ def tree():
 def node(value, attribute="text", contains=False):
     global denied_lan_once
     deadline = time.monotonic() + 20
-    opened_sidebar = False
+    last_sidebar_attempt = 0.0
     while time.monotonic() < deadline:
         try:
             nodes = list(tree().iter("node"))
@@ -50,17 +50,17 @@ def node(value, attribute="text", contains=False):
                     denied_lan_once = True
                     node("连接局域网主机需要", contains=True)
                     print("lan-permission-denied: passed", flush=True)
-                    click("连接")
+                    submit_pairing()
                 else:
                     tap(allow)
                     print("lan-permission-granted: passed", flush=True)
                 deadline = time.monotonic() + 15
                 continue
-            if not any(n.attrib.get("text") == "已连接" for n in nodes) and not opened_sidebar:
+            if not any(n.attrib.get("text") in ("已连接", "管理主机") for n in nodes) and time.monotonic() - last_sidebar_attempt > 3:
                 menu = next((n for n in nodes if n.attrib.get("content-desc") == "打开侧栏"), None)
                 if menu is not None:
                     tap(menu)
-                    opened_sidebar = True
+                    last_sidebar_attempt = time.monotonic()
                     continue
         for element in nodes:
             actual = element.attrib.get(attribute, "")
@@ -78,6 +78,56 @@ def tap(element):
 def click(value, attribute="text"):
     tap(node(value, attribute))
 
+
+
+
+def open_pairing():
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        try:
+            nodes = list(tree().iter("node"))
+            welcome = any(n.attrib.get("text") == "欢迎使用 Paseo" for n in nodes)
+            label = "粘贴配对链接" if welcome else "添加主机"
+            target = next((n for n in nodes if n.attrib.get("text") == label or n.attrib.get("content-desc") == label), None)
+            if target is not None:
+                tap(target)
+                node("配对链接", "content-desc")
+                return
+        except (ET.ParseError, subprocess.CalledProcessError):
+            pass
+        time.sleep(.2)
+    raise AssertionError("Add-host action did not appear")
+
+
+
+def open_appearance():
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        try:
+            nodes = list(tree().iter("node"))
+            settings = next((n for n in nodes if n.get("text") == "设置"), None)
+            if settings is not None:
+                tap(settings)
+                node("外观")
+                return
+            menu = next((n for n in nodes if n.get("content-desc") == "打开侧栏"), None)
+            if menu is not None:
+                tap(menu)
+                click("设置")
+                node("外观")
+                return
+        except (ET.ParseError, subprocess.CalledProcessError):
+            pass
+        time.sleep(.2)
+    raise AssertionError("Appearance settings action did not appear")
+
+
+def submit_pairing():
+    nodes = list(tree().iter("node"))
+    if any(n.attrib.get("text") == "配对" for n in nodes):
+        click("配对")
+    else:
+        click("连接")
 
 
 def click_revealed(value):
@@ -144,11 +194,11 @@ def main():
     if args.reset:
         adb("shell", "pm", "clear", "sh.paseo.android")
     adb("shell", "am", "start", "-n", "sh.paseo.android/.MainActivity")
-    click("添加主机")
+    open_pairing()
     assert len([n for n in tree().iter("node") if n.attrib.get("class") == "android.widget.EditText"]) == 1
     fill(0, "tcp://10.0.2.2:6768?password=test")
     hide_keyboard()
-    click("连接")
+    submit_pairing()
     node("已连接")
     node("Native Android")
     node("Empty project")

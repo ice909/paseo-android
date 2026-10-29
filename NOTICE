@@ -16,3 +16,12 @@ their original vector source URLs are retained in the JSON resource.
 
 This app uses Bouncy Castle 1.86 lightweight cryptographic primitives,
 licensed under the MIT license: https://www.bouncycastle.org/licence.html
+
+Welcome screen logo and layout are adapted from getpaseo/paseo (Apache-2.0),
+copyright (c) 2025-present Mohamed Boudra, commit abc97e0545bb92e43eb96027102d845657c0a2eb.
+App UI icons use lucide-react-native 1.50.0 paths (ISC).
+See third_party/lucide-LICENSE. Geometric SVG elements are converted to Android vectors.
+
+Provider marks and custom panel icons are copied from the pinned official Paseo app (Apache-2.0).
+File icons are from material-icon-theme (MIT), via Paseo material-file-icons.ts,
+with the official 0.65 OKLab chroma adjustment. See third_party/material-icon-theme-LICENSE.

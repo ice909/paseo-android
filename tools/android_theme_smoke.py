@@ -20,12 +20,7 @@ THEMES = [
 
 
 def open_settings():
-    nodes = list(ui.tree().iter("node"))
-    if not any(n.attrib.get("text") == "设置" for n in nodes):
-        ui.click("打开侧栏", "content-desc")
-    ui.click("设置")
-    ui.node("外观")
-
+    ui.open_appearance()
 
 def select_theme(label):
     trigger = next(n for n in ui.tree().iter("node") if n.attrib.get("content-desc", "").startswith("主题："))
@@ -56,7 +51,6 @@ def check_background(hex_color):
 def restart():
     ui.adb("shell", "am", "force-stop", "sh.paseo.android")
     ui.adb("shell", "am", "start", "-n", "sh.paseo.android/.MainActivity")
-    ui.node("打开侧栏", "content-desc")
     open_settings()
 
 
@@ -77,10 +71,10 @@ def main():
             ui.adb("shell", "pm", "clear", "sh.paseo.android")
         ui.adb("shell", "am", "start", "-n", "sh.paseo.android/.MainActivity")
         if args.with_host:
-            ui.click("添加主机")
+            ui.open_pairing()
             ui.fill(0, "tcp://10.0.2.2:6768?password=test")
             ui.hide_keyboard()
-            ui.click("连接")
+            ui.submit_pairing()
             ui.node("已连接")
             ui.click("Native Android")
             ui.node("Native client review")

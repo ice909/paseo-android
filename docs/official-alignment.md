@@ -22,7 +22,7 @@
 - `agent_permission_response`：保留原始 input，在 `updatedInput.answers` 中按问题的 **header** 写入答案；多选用逗号空格连接标签，自定义单选答案替代标签。
 - 文件和终端直接使用工作区目录 / ID；没有代理的工作区也能使用，不构造假的代理记录。
 
-这一阶段的目标是接通基本编码流程。二维码扫描、语音、推送、附件、归档历史入口、日程、插件、完整 VT 终端、PR 和完整 Git 管理留待后续；未显示没有实现的附件 / 语音按钮。
+工作区阶段先接通基本编码流程；对话交互在 0.6.0 中继续实现，见下方记录。推送、归档历史入口、日程、插件运行时、完整 VT 终端和完整 Git 管理仍未移植。
 
 验证分为协议回归测试、隔离的官方 daemon 0.13.2 文件 / 终端集成测试，以及 Android 17 模拟器上的可重复 UI smoke。模拟服务不执行真实 AI 或 shell；真实 daemon 集成测试也不启动 AI 任务。它们不能替代用户真实主机上的代理与设备性能验证。
 
@@ -41,3 +41,36 @@
 保留官方 theme preference 键、顺序、色板与状态 / diff 语义色。默认 `auto`；系统深色使用 Paseo Dark，额外的 Zinc、Midnight、Claude、Ghostty、纯黑始终为深色。主题保存在独立的设备本地 appearance 偏好中，不写入主机配置；切换无需重建 Activity 或重新连接主机。系统状态栏、导航栏图标依据所选主题更新。
 
 侧栏「设置」进入外观页，支持主题下拉菜单与即时预览。插件贡献主题依赖官方 JS 插件运行时，目前未移植；字体、字号与独立语法高亮主题设置仍留待后续。
+
+## 欢迎页与配对弹层（0.4.0）
+
+以「尚未添加主机」为范围，对齐官方 `components/welcome-screen.tsx`、`pair-link-modal.tsx`、`add-host-modal.tsx` 与 `app/pair-scan.tsx`。欢迎页没有主机工具栏或创建表单：96dp 官方标志、欢迎文案、paseo.sh 链接、三种连接方式、设置及底部版本号均按原始顺序、间距与色值实现。标志直接使用官方 SVG 路径；图标来自官方锁定的 lucide-react-native 1.50.0，保留 24 单位视口、2 单位描边与圆头 / 圆角。相关许可见 NOTICE、third_party/ 与 APK assets/licenses/。
+
+链接输入、按需密码及直连字段在支持 65% / 90% 高度切换的原生底部弹层中显示，不使用 Material 浮动标签输入框。欢迎页设置入口保留主题切换。二维码用 CameraX 和 ZXing 在设备本地解码，释放页面即释放相机；权限拒绝后仍可使用链接与直连。依赖版本依据 [AndroidX Camera 发布记录](https://developer.android.com/jetpack/androidx/releases/camera) 与 [ZXing 发布记录](https://github.com/zxing/zxing/releases)。
+
+## 全应用图标（0.5.0）
+
+`PaseoIcons.kt` / `Iconography.kt` 统一侧栏、聊天、composer、工具调用、审批、文件、diff、终端、主题设置与旧主机编辑弹窗。所有显式 Material Icons 引用与 `material-icons-extended` 依赖均已移除；手机侧栏按钮保留官方 16 / 16 / 8 长度和 1.5 描边，资源面板按钮使用官方 PanelRight（1.5 描边），Git 改动面板沿用官方 SourceControlPanelIcon。
+
+资源由 `tools/sync_official_icons.py` 从同一参考提交生成：52 个 lucide-react-native 1.50.0 图标、9 个内置 provider 标志、54 个官方文件图标及自定义图形。品牌标志保留原始填充、透明度、evenodd 与视口比例；文件 SVG 使用官方 `utils/color.ts` 的 0.65 OKLab chroma，再转换为 Android vector（含 Kotlin 渐变），不叠加单色 tint。用户主机提供的运行时自定义 provider SVG 尚未增加到协议模型，未知 provider 与官方默认规则一样使用 Bot。
+
+工具调用根据官方 `utils/tool-call-icon-name.ts` 选择 Eye、Pencil、Search、SquareTerminal、Bot、Brain、Wrench、MicVocal 或 Paseo 标志；未知工具与命名空间有回归测试。资源文件的许可见 `third_party/`、`NOTICE` 与 APK `assets/licenses/`。
+
+
+## 对话交互（0.6.0）
+
+对照同一官方提交的 `composer/{submit,actions,input/state}.ts`、`runtime/host-runtime.ts`、`components/message.tsx`、`components/rewind/` 和 `voice/voice-runtime.ts`：
+
+- `ConversationController` 以主机 ID 和代理 ID 为键管理草稿、发送、取消、错误、乐观消息和 FIFO 队列。默认发送 `activeTurnBehavior: steer`；可选择 interrupt 或 queue，运行中长按发送执行相反行为。queue 偏好遇到待审批请求时改为 interrupt，避免把回答排在被审批阻塞的任务后面。
+- 发送立即清空草稿。失败恢复文本与附件，保留等待回执期间新输入的内容；重试使用同一 messageId。已收到 canonical echo 时，以时间线确认收件，避免丢回执导致重复恢复。队列可编辑、立即发送，代理转为空闲时只发送下一项；失败退回队首，不循环重试。队列与官方一样保存在运行时内存中。
+- `ChatStore` 用独立 Keystore 密钥加密保存草稿、未确认发送记录及本机已发送附件引用；发出网络请求前先落盘 outbox，进程重启后先与 canonical 历史对账，仍未确认的记录可以编辑或用原 messageId 重试。切换代理和主机不串草稿。编辑器展开保留输入，手机回车换行，支持 / 命令与 @ 文件建议（选择后使用官方的双引号路径格式）。
+- 模型、模式、思考强度及 daemon 声明的 toggle/select 特性使用对应 RPC，并在请求期间禁用重复切换。停止按钮在回合结束前保持取消状态；审批提交后等待主机解决事件，避免重复提交。
+- 用户消息支持复制、长消息展开和由 capability flags 控制的 conversation/files/both 回退；回退会话后将文本恢复到草稿。工具与思考展开、任务列表、错误状态继续使用原生组件；已完成回合按官方默认折叠早期步骤并保留最后答复。Markdown 链接可点击，代码块保留独立复制。
+- 图片通过 `images` 发送；普通文件使用 `file.upload.request` 和官方 0x10/0x11/0x12 二进制帧上传，再作为 `uploaded_file` 发送。上传限定 128 KiB 分块与发送缓冲上限，绑定连接 generation，换主机时中止。单文件不超过 50 MiB；大于 4 MiB 的图片先降采样再编码以限制手机内存。保留本机图片缩放预览、附件移除和失败后恢复。Issue / PR 附件按 `forgeSearch` 特性选择新旧 schema。
+- `ConversationAudio` 用 AudioRecord 捕获 16 kHz、16-bit、单声道 PCM，使用官方 dictation_stream 与 voice_audio_chunk 协议；处理部分 / 最终转写、取消、转写重试、静音、打断及 audio_played。退出会话或应用进入后台释放录音，后台播放在取消后中止。AEC 可用时启用回声消除，不可用时播放期间抑制录音回传。主机能力不可用时显示其原因。
+- 图标同步新增 composer、附件、回退、全屏和语音对应的官方 Lucide 图形，目前共 68 个；不引入近似图标库。
+
+语音服务的模型、密钥与提供商仍由主机配置；真实识别、TTS 音质与硬件回声消除需要真机验证。第三方 JS 插件 UI 和资源搜索、完整 Markdown 表格 / 公式及完整 PR 管理未在这一轮移植，不能将本次实现视为整个官方 app 的完整复刻。
+
+
+本轮回归包括 44 项核心测试（另有 1 项需要真实 daemon 环境的集成测试未在本轮运行）、16 项 Android 单元测试、Lint 和压缩 APK 构建。核心测试使用官方 relay 库验证 protected / legacy 二进制上传互通。Android 17 模拟器验证普通发送、steer、长按排队、队列编辑与自动续发、失败后的原 ID 重试、审批阻塞时的 interrupt、补全、编辑器展开、Issue 附件、麦克风权限、转写、语音静音 / 播放确认、跨代理草稿和进程死亡后的 outbox 恢复。文件与图片选择器、预览和发送内容使用 SHA-256 对照原始字节。模拟服务不执行真实 AI 或 shell。

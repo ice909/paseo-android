@@ -59,3 +59,9 @@ systemd-run --user --scope -p MemoryMax=3G -p MemorySwapMax=0 -- \
 
 - [Gradle daemon 与一次性 JVM](https://docs.gradle.org/current/userguide/gradle_daemon.html)
 - [Kotlin 编译器执行策略](https://kotlinlang.org/docs/gradle-compilation-and-caches.html#defining-kotlin-compiler-execution-strategy)
+
+## 图标约定
+
+- 应用图标统一使用 `PaseoIcons` / `PaseoGlyph`，对照官方对应功能选择图形；不要重新引入 Material Icons 或其他近似图标库。
+- 文件类型图标通过 `FileGlyph` 渲染并保留官方调色后的多色填充；代理标志通过 `PaseoIcons.provider` 选择。
+- 同步资源使用 `python3 tools/sync_official_icons.py --paseo ../paseo`。该工具读取官方锁定版本、校验 npm 完整性，并使用官方 OKLab 函数处理文件图标；不要手动重画 SVG 路径。
