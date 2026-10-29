@@ -7,6 +7,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import sh.paseo.android.appearance.AppearanceStore
+import sh.paseo.android.appearance.ThemePreference
 import sh.paseo.android.core.*
 import sh.paseo.android.data.HostStore
 import sh.paseo.android.data.LocalNetworkAccess
@@ -14,6 +16,12 @@ import sh.paseo.android.data.LocalNetworkAccess
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     val repository = PaseoRepository()
     val state = repository.state
+    private val appearance = AppearanceStore(application)
+    val theme = appearance.theme
+    fun setTheme(value: ThemePreference) {
+        appearance.select(value)
+        action { appearance.persist() }
+    }
     private val store = HostStore(application)
     private val storageMutex = Mutex()
     val hosts = MutableStateFlow<List<Host>>(emptyList())

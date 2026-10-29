@@ -162,8 +162,8 @@ fun DiffPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, modi
                     Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Outlined.Difference, null, Modifier.size(16.dp))
                         Text(file.string("path"), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                        Text("+${file.long("additions") ?: 0}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
-                        Text("−${file.long("deletions") ?: 0}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                        Text("+${file.long("additions") ?: 0}", color = LocalPaseoPalette.current.statusSuccess, style = MaterialTheme.typography.labelSmall)
+                        Text("−${file.long("deletions") ?: 0}", color = LocalPaseoPalette.current.statusDanger, style = MaterialTheme.typography.labelSmall)
                     }
                 }
                 if (file.string("status") in setOf("too_large", "binary")) item { Text("二进制文件或内容过大", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall) }
@@ -173,7 +173,7 @@ fun DiffPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, modi
                     itemsIndexed(hunk.array("lines"), key = { i, _ -> "${file.string("path")}:$hunkIndex:$i" }) { _, element ->
                         val line = element.jsonObject
                         val type = line.string("type")
-                        val color = when (type) { "add" -> MaterialTheme.colorScheme.primary; "remove" -> MaterialTheme.colorScheme.error; else -> MaterialTheme.colorScheme.onSurface }
+                        val color = when (type) { "add" -> LocalPaseoPalette.current.diffAddition; "remove" -> LocalPaseoPalette.current.diffDeletion; else -> MaterialTheme.colorScheme.onSurface }
                         Row(Modifier.fillMaxWidth().background(color.copy(alpha = if (type in setOf("add", "remove")) 0.09f else 0f)).padding(horizontal = 12.dp, vertical = 2.dp)) {
                             Text(when (type) { "add" -> "+ "; "remove" -> "− "; else -> "  " }, color = color, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                             SelectionContainer { Text(line.string("content"), color = color, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
@@ -246,8 +246,8 @@ fun TerminalPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, 
             val lines = remember(text) { text.lines() }
             val list = androidx.compose.foundation.lazy.rememberLazyListState()
             LaunchedEffect(text) { if (list.firstVisibleItemIndex == 0) list.scrollToItem(0) }
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF121214)).padding(12.dp), state = list, reverseLayout = true) {
-                items(lines.asReversed()) { line -> SelectionContainer { Text(line.ifEmpty { " " }, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFFE4E4E7)) } }
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().background(LocalPaseoPalette.current.terminalBackground).padding(12.dp), state = list, reverseLayout = true) {
+                items(lines.asReversed()) { line -> SelectionContainer { Text(line.ifEmpty { " " }, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 18.sp, color = LocalPaseoPalette.current.terminalForeground) } }
             }
         }
         Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

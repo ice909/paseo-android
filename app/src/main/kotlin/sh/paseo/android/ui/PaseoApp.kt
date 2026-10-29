@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,9 +44,12 @@ fun PaseoApp(vm: AppViewModel) {
     val screen by vm.screen.collectAsStateWithLifecycle()
     val hosts by vm.hosts.collectAsStateWithLifecycle()
     val initialized by vm.initialized.collectAsStateWithLifecycle()
+    val contentState = rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val theme by vm.theme.collectAsStateWithLifecycle()
+    var appearanceReturnScreen by rememberSaveable { mutableStateOf("hosts") }
     var editingHostId by rememberSaveable { mutableStateOf<String?>(null) }
     val editingHost = hosts.find { it.id == editingHostId }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
@@ -69,28 +73,34 @@ fun PaseoApp(vm: AppViewModel) {
     }
     LaunchedEffect(vm) { vm.notices.collect { snackbar.showSnackbar(it) } }
     LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); vm.repository.clearError() } }
-    BackHandler(drawer.isOpen || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
+    BackHandler(drawer.isOpen || screen == "appearance" || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
         when {
             drawer.isOpen -> scope.launch { drawer.close() }
+            screen == "appearance" -> vm.screen.value = appearanceReturnScreen
             explorer -> explorer = false
             createAgent -> createAgent = false
             else -> { vm.backToSessions(); terminal = false }
         }
     }
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = screen != "hosts", drawerContent = {
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = screen != "hosts" && screen != "appearance", drawerContent = {
         ModalDrawerSheet(drawerContainerColor = sidebarColor(), drawerContentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.widthIn(max = 340.dp).fillMaxHeight()) {
             WorkspaceSidebar(state, onNew = { newProject = it; navigate("new") }, onOpen = {
                 vm.openWorkspace(it); terminal = false; createAgent = false; explorer = false; scope.launch { drawer.close() }
-            }, onHosts = { navigate("hosts") }, onRefresh = { vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() } },
+            }, onHosts = { navigate("hosts") }, onAppearance = {
+                appearanceReturnScreen = screen
+                vm.screen.value = "appearance"
+                scope.launch { drawer.close() }
+            }, onRefresh = { vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() } },
                 onMore = { vm.action { vm.repository.refreshWorkspaces(loadMore = true) } })
         }
     }) {
-        Scaffold(snackbarHost = { SnackbarHost(snackbar) }, containerColor = MaterialTheme.colorScheme.background,
+        Scaffold(snackbarHost = { SnackbarHost(snackbar) }, containerColor = if (screen == "chat") LocalPaseoPalette.current.surfaceWorkspace else MaterialTheme.colorScheme.background,
             topBar = {
                 Column(Modifier.statusBarsPadding()) {
                     Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Outlined.Menu, "打开侧栏") }
-                        if (explorer) {
+                        if (screen == "appearance") IconButton(onClick = { vm.screen.value = appearanceReturnScreen }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
+                        else IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Outlined.Menu, "打开侧栏") }
+                        if (explorer && screen != "appearance") {
                             listOf("改动", "文件").forEachIndexed { index, label ->
                                 FilterChip(selected = explorerTab == index, onClick = { explorerTab = index }, label = { Text(label) }, modifier = Modifier.padding(end = 8.dp))
                             }
@@ -98,7 +108,7 @@ fun PaseoApp(vm: AppViewModel) {
                             IconButton(onClick = { explorer = false }) { Icon(Icons.Outlined.Close, "关闭文件面板") }
                         } else {
                             Column(Modifier.weight(1f).padding(start = 2.dp)) {
-                                Text(if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
+                                Text(if (screen == "appearance") "外观" else if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
                                     style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (screen == "chat" && workspace != null && !createAgent) Text(workspace.projectDisplayName,
                                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -121,10 +131,10 @@ fun PaseoApp(vm: AppViewModel) {
                                 }
                                 IconButton(onClick = { explorer = true }) { Icon(Icons.Outlined.ChromeReaderMode, "打开文件和改动") }
                             }
-                            if (createAgent) IconButton(onClick = { createAgent = false }) { Icon(Icons.Outlined.Close, "取消新建代理") }
+                            if (createAgent && screen != "appearance") IconButton(onClick = { createAgent = false }) { Icon(Icons.Outlined.Close, "取消新建代理") }
                         }
                     }
-                    if (!state.connected && screen != "hosts") ConnectionStrip(state) { state.host?.let(vm::connect) }
+                    if (!state.connected && screen != "hosts" && screen != "appearance") ConnectionStrip(state) { state.host?.let(vm::connect) }
                     if (screen == "chat" && workspace != null && !explorer && !createAgent) Surface(onClick = { picker = true }, color = MaterialTheme.colorScheme.background) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(if (terminal) Icons.Outlined.Terminal else Icons.Outlined.AutoAwesome, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -136,13 +146,14 @@ fun PaseoApp(vm: AppViewModel) {
                 }
             }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
-                when {
+                contentState.SaveableStateProvider(screen) { when {
+                    screen == "appearance" -> AppearanceSettingsScreen(theme, vm::setTheme)
                     !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                     screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { editingHostId = null; showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
                     screen == "chat" && workspace != null && explorer -> if (explorerTab == 0) DiffPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else FilesPane(vm, workspace.context, state.connected, Modifier.fillMaxSize())
                     screen == "chat" && workspace != null && !createAgent -> if (terminal) TerminalPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else ChatScreen(vm, state, onCreateAgent = { createAgent = true })
                     else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject) { createAgent = false; terminal = false }
-                }
+                } }
             }
         }
     }
@@ -177,7 +188,7 @@ fun PaseoApp(vm: AppViewModel) {
 fun ConnectionStrip(state: PaseoState, onClick: () -> Unit = {}) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            Box(Modifier.size(7.dp).background(if (state.connected) Color(0xFF35C264) else MaterialTheme.colorScheme.outline, RoundedCornerShape(50)))
+            Box(Modifier.size(7.dp).background(if (state.connected) LocalPaseoPalette.current.statusDotSuccess else MaterialTheme.colorScheme.outline, RoundedCornerShape(50)))
             Text(state.host?.displayName ?: "尚未连接主机", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
             Text(when (state.connection) {
                 ConnectionStatus.Connected -> "已连接"

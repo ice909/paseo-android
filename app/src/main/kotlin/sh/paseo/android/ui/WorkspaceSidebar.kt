@@ -2,7 +2,6 @@ package sh.paseo.android.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,21 +20,21 @@ import androidx.compose.ui.unit.dp
 import sh.paseo.android.core.*
 
 @Composable
-fun sidebarColor(): Color = if (isSystemInDarkTheme()) Color(0xFF131316) else Color(0xFFF4F4F5)
+fun sidebarColor(): Color = LocalPaseoPalette.current.surfaceSidebar
 
 @Composable
 fun StatusDot(waiting: Boolean = false, running: Boolean = false, failed: Boolean = false) {
     Box(Modifier.size(6.dp).background(when {
-        waiting -> Color(0xFFDB932E)
-        failed -> Color(0xFFF7796D)
-        running -> Color(0xFF5CAAF6)
+        waiting -> LocalPaseoPalette.current.statusDotWarning
+        failed -> LocalPaseoPalette.current.statusDotDanger
+        running -> LocalPaseoPalette.current.statusDotRunning
         else -> MaterialTheme.colorScheme.outline
     }, RoundedCornerShape(50)))
 }
 
 @Composable
 fun WorkspaceSidebar(state: PaseoState, onNew: (String?) -> Unit, onOpen: (Workspace) -> Unit,
-    onHosts: () -> Unit, onRefresh: () -> Unit, onMore: () -> Unit) {
+    onHosts: () -> Unit, onAppearance: () -> Unit, onRefresh: () -> Unit, onMore: () -> Unit) {
     var search by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
@@ -95,6 +94,7 @@ fun WorkspaceSidebar(state: PaseoState, onNew: (String?) -> Unit, onOpen: (Works
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         ConnectionStrip(state, onHosts)
         SidebarAction("管理主机", Icons.Outlined.Dns, onHosts)
+        SidebarAction("设置", Icons.Outlined.Settings, onAppearance)
     }
 }
 
