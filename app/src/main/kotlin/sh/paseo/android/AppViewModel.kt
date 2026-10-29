@@ -45,14 +45,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val collapseTurns = MutableStateFlow(chatStore.collapseTurns)
     fun setCollapseTurns(value: Boolean) { collapseTurns.value = value; chatStore.collapseTurns = value }
     val modEnter = MutableStateFlow(chatStore.modEnter)
+    val homeSubmitRequests = MutableSharedFlow<ConversationKey>(extraBufferCapacity = 1)
     private val uploadedAttachments = mutableMapOf<Pair<String, String>, kotlinx.serialization.json.JsonObject>()
     private fun conversationMemory() = conversations.sessions.value.mapValues { ConversationMemory(it.value.draft, it.value.sentAttachments, it.value.optimistic, it.value.failed) }
     val conversations: ConversationController = ConversationController(viewModelScope, sendMessage = { key, message, behavior ->
         // Persist the outbox before any network effect; canonical echoes clear it on reconnect.
         chatStore.save(conversationMemory())
+        val (images, attachments) = prepareAttachments(key, message.draft.attachments)
+        repository.sendMessage(key.agentId, message.draft.text, message.id, behavior, images, attachments, key.hostId)
+    }, cancelAgent = { key ->
+        check(state.value.host?.id == key.hostId) { "当前主机已切换" }
+        repository.cancelAgent(key.agentId)
+    }).apply { behavior = sendBehavior.value }
+    private suspend fun prepareAttachments(key: ConversationKey, values: List<ChatAttachment>): Pair<List<kotlinx.serialization.json.JsonObject>, List<kotlinx.serialization.json.JsonObject>> {
         val images = mutableListOf<kotlinx.serialization.json.JsonObject>()
         val attachments = mutableListOf<kotlinx.serialization.json.JsonObject>()
-        for (attachment in message.draft.attachments) {
+        for (attachment in values) {
             when {
                 attachment.isImage -> images += ChatAttachments.encodeImage(attachment)
                 attachment.payload != null -> attachments += requireNotNull(attachment.payload)
@@ -62,16 +70,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        repository.sendMessage(key.agentId, message.draft.text, message.id, behavior, images, attachments, key.hostId)
-    }, cancelAgent = { key ->
-        check(state.value.host?.id == key.hostId) { "当前主机已切换" }
-        repository.cancelAgent(key.agentId)
-    }).apply { behavior = sendBehavior.value }
+        return images to attachments
+    }
     val audio = ConversationAudio(application, viewModelScope, repository) { key, transcript, send ->
         if (transcript.isNotBlank()) {
             val current = conversations.session(key).draft.text
             conversations.setDraft(key, current + (if (current.isNotEmpty() && !current.last().isWhitespace()) " " else "") + transcript.trim())
-            if (send) conversations.send(key)
+            if (send) {
+                if (key.agentId.startsWith("workspace-draft:")) homeSubmitRequests.tryEmit(key)
+                else conversations.send(key)
+            }
         }
     }
     fun setSendBehavior(value: SendBehavior) { sendBehavior.value = value; conversations.behavior = value; chatStore.behavior = value }
@@ -120,10 +128,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             finally { initialized.value = true }
         }
     }
-    fun connect(host: Host) {
+    fun connect(host: Host) = connectTo(host, "sessions")
+    fun connectWorkspaceHost(host: Host) = connectTo(host, "new")
+    private fun connectTo(host: Host, destination: String) {
         connectionRequestJob?.cancel()
         connectionRequestJob = action {
-            if (networkAccess(host)) connectNow(host)
+            if (networkAccess(host)) connectNow(host, destination)
             else notices.emit("连接局域网主机需要附近设备权限，请允许后重试。")
         }
     }
@@ -144,9 +154,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (resetPassword) pairingPasswordNeeded.value = false
     }
     fun cancelPairing() { pairingGeneration++; pairingJob?.cancel(); pairingJob = null; pairingBusy.value = false }
-    private fun connectNow(host: Host) {
+    private fun connectNow(host: Host, destination: String = "sessions") {
         repository.connect(host)
-        screen.value = "sessions"
+        screen.value = destination
         action { persist(host.id) }
     }
     fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit): Job {
@@ -214,6 +224,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 else repository.createWorkspace(provider, cwd.trim(), model, mode, prompt, title, key, projectId, worktree, branch)
                 screen.value = "chat"
                 onCreated()
+            } finally { creating.value = false }
+        }
+    }
+    fun createFromHome(provider: String, cwd: String, model: String, mode: String, draftKey: ConversationKey,
+        key: String, workspace: Workspace?, projectId: String?, worktree: Boolean, baseRef: String,
+        terminal: Boolean, onCreated: (Boolean) -> Unit) {
+        if (creating.value || draftKey in importingAttachments.value) return
+        val draft = conversations.session(draftKey).draft
+        val hostId = state.value.host?.id ?: return
+        creating.value = true
+        action {
+            try {
+                check(hostId == draftKey.hostId && state.value.connected) { "主机未连接" }
+                val (images, attachments) = if (terminal) emptyList<kotlinx.serialization.json.JsonObject>() to emptyList()
+                    else prepareAttachments(draftKey, draft.attachments)
+                check(state.value.host?.id == hostId && state.value.connected) { "主机连接已改变，请重试" }
+                val target = if (workspace != null) {
+                    repository.createAgent(workspace, provider, model, mode, draft.text.trim(), "", key, images, attachments)
+                    workspace
+                } else repository.createWorkspace(provider, cwd.trim(), model, mode, draft.text.trim(), "", key,
+                    projectId, worktree, withInitialAgent = !terminal && !draft.empty, baseRef = baseRef, images = images, attachments = attachments)
+                if (terminal) {
+                    val result = repository.createTerminal(target.context)
+                    if (draft.text.isNotBlank()) repository.terminalInput(result.string("id"), draft.text.trimEnd() + "\r")
+                }
+                conversations.setDraft(draftKey, "")
+                draft.attachments.forEach { conversations.removeAttachment(draftKey, it.id) }
+                screen.value = "chat"
+                onCreated(terminal)
             } finally { creating.value = false }
         }
     }

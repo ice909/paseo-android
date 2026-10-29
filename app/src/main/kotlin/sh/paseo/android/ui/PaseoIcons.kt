@@ -73,6 +73,8 @@ object PaseoIcons {
     @get:DrawableRes val Wrench: Int get() = R.drawable.lucide_wrench
     @get:DrawableRes val MicVocal: Int get() = R.drawable.lucide_mic_vocal
     @get:DrawableRes val ListTodo: Int get() = R.drawable.lucide_list_todo
+    @get:DrawableRes val GitBranch: Int get() = R.drawable.lucide_git_branch
+    @get:DrawableRes val MessageCircle: Int get() = R.drawable.lucide_message_circle
     @get:DrawableRes val SquareFilled: Int get() = R.drawable.lucide_square_filled
     @get:DrawableRes val Explorer: Int get() = R.drawable.paseo_explorer_toggle
     @get:DrawableRes val MobileMenu: Int get() = R.drawable.paseo_mobile_menu

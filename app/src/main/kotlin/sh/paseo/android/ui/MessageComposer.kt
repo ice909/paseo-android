@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -57,6 +58,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
     var lastValue by remember { mutableStateOf(value) }
     var recallIndex by remember { mutableIntStateOf(-1) }
     var recalled by remember { mutableStateOf("") }
+    var renderedLines by remember { mutableIntStateOf(1) }
     if (value != lastValue) {
         editor = TextFieldValue(value, TextRange((cursorRequest?.takeIf { it.first == value }?.second ?: value.length).coerceIn(0, value.length)))
         lastValue = value
@@ -69,17 +71,17 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
     val stop = running && value.isBlank() && !hasAttachments
     val queue = running && behavior == SendBehavior.Queue
     BackHandler(expanded && onExpand != null) { onExpand?.invoke() }
-    Surface(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-        shape = RoundedCornerShape(14.dp), color = palette.surface0,
-        border = BorderStroke(1.dp, palette.border)) {
-        Column(Modifier.padding(8.dp).then(if (expanded) Modifier.fillMaxHeight() else Modifier)) {
+    Surface(modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        shape = RoundedCornerShape(16.dp), color = palette.surface1,
+        border = BorderStroke(1.dp, palette.borderAccent)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).then(if (expanded) Modifier.fillMaxHeight() else Modifier), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             attachments()
-            Box(Modifier.fillMaxWidth().then(if (expanded) Modifier.weight(1f) else Modifier).padding(start = 7.dp, top = 9.dp, bottom = 9.dp, end = if (onExpand != null) 30.dp else 7.dp)) {
+            Box(Modifier.fillMaxWidth().then(if (expanded) Modifier.weight(1f) else Modifier).padding(end = 36.dp)) {
                 BasicTextField(editor, { edit(it) }, enabled = enabled, maxLines = if (expanded) Int.MAX_VALUE else 6,
-                    textStyle = PaseoUiText.copy(color = palette.foreground),
+                    textStyle = PaseoUiText.copy(color = palette.foreground), onTextLayout = { renderedLines = it.lineCount },
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default),
                     cursorBrush = SolidColor(palette.accent), modifier = Modifier.fillMaxWidth()
-                        .then(if (expanded) Modifier.fillMaxHeight() else Modifier.heightIn(min = 26.dp))
+                        .then(if (expanded) Modifier.fillMaxHeight() else Modifier.heightIn(min = 30.dp, max = 160.dp))
                         .then(if (onReceiveFiles != null) Modifier.contentReceiver(receiver) else Modifier)
                         .semantics { contentDescription = "消息输入框" }
                         .onPreviewKeyEvent { event ->
@@ -112,17 +114,22 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
                         if (value.isEmpty()) PaseoText(placeholder, color = palette.foregroundExtraMuted)
                         inner()
                     })
-                if (onExpand != null) IconButton(onClick = onExpand, modifier = Modifier.align(Alignment.TopEnd).offset(x = 28.dp).size(28.dp)) {
+                if (onExpand != null && (expanded || renderedLines > 2)) IconButton(onClick = onExpand, modifier = Modifier.align(Alignment.TopEnd).offset(x = 36.dp).size(28.dp)) {
                     PaseoGlyph(if (expanded) PaseoIcons.Minimize2 else PaseoIcons.Maximize2, if (expanded) "收起输入框" else "展开输入框", Modifier.size(16.dp), palette.foregroundMuted)
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.layout { measurable, constraints ->
+                val bleed = 6.dp.roundToPx()
+                val placeable = measurable.measure(constraints.copy(minWidth = constraints.minWidth + bleed * 2, maxWidth = constraints.maxWidth + bleed * 2))
+                layout(placeable.width - bleed * 2, placeable.height) { placeable.placeRelative(-bleed, 0) }
+            }, verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, content = options)
                 trailingControls()
+                Spacer(Modifier.width(4.dp))
                 val active = canSend && (!sending || stop) && !cancelling
                 val label = if (stop) "停止生成" else if (queue) "加入队列" else sendDescription
                 val alternateLabel = if (queue) "立即发送" else "加入队列"
-                Box(Modifier.size(34.dp).clip(CircleShape)
+                Box(Modifier.size(28.dp).clip(CircleShape)
                     .background(if (active) palette.accent else palette.surface2)
                     .combinedClickable(enabled = active, role = Role.Button,
                         onClick = { if (stop) onStop() else onSend() },
@@ -130,7 +137,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
                         onLongClick = if (running && !stop && onAlternateSend != null) onAlternateSend else null)
                     .semantics { contentDescription = label; if (!active) disabled() }, contentAlignment = Alignment.Center) {
                     if (sending && !stop || cancelling) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = palette.accentForeground)
-                    else PaseoGlyph(when { stop -> PaseoIcons.SquareFilled; returnIcon -> PaseoIcons.CornerDownLeft; else -> PaseoIcons.ArrowUp }, modifier = Modifier.size(18.dp), tint = if (active) palette.accentForeground else palette.foregroundExtraMuted)
+                    else PaseoGlyph(when { stop -> PaseoIcons.SquareFilled; returnIcon -> PaseoIcons.CornerDownLeft; else -> PaseoIcons.ArrowUp }, modifier = Modifier.size(20.dp), tint = if (active) palette.accentForeground else palette.foregroundExtraMuted)
                 }
             }
         }
@@ -141,9 +148,9 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
 fun ComposerChoice(value: String, choices: List<Pair<String, String>>, enabled: Boolean = true, icon: Int? = null, onChoose: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        TextButton(onClick = { expanded = true }, enabled = enabled && choices.isNotEmpty(), contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
-            if (icon != null) { PaseoGlyph(icon, modifier = Modifier.size(16.dp), tint = LocalPaseoPalette.current.foregroundMuted); Spacer(Modifier.width(6.dp)) }
-            PaseoText(value, style = PaseoUiText.copy(fontSize = 13.sp), maxLines = 1)
+        Row(Modifier.height(28.dp).clip(RoundedCornerShape(6.dp)).clickable(enabled = enabled && choices.isNotEmpty(), role = Role.Button) { expanded = true }.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (icon != null) PaseoGlyph(icon, modifier = Modifier.size(14.dp), tint = LocalPaseoPalette.current.foregroundMuted)
+            PaseoText(value, style = PaseoUiText.copy(fontSize = 14.sp), maxLines = 1, color = LocalPaseoPalette.current.foregroundMuted)
             PaseoGlyph(PaseoIcons.ChevronDown, null, Modifier.size(14.dp), tint = LocalPaseoPalette.current.foregroundExtraMuted)
         }
         DropdownMenu(expanded, { expanded = false }, modifier = Modifier.heightIn(max = 340.dp)) {

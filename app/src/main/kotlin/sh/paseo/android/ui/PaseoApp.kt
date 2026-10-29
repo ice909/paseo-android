@@ -66,7 +66,9 @@ fun PaseoApp(vm: AppViewModel) {
     var picker by rememberSaveable { mutableStateOf(false) }
     var explorer by rememberSaveable(state.selectedWorkspaceId) { mutableStateOf(false) }
     var explorerTab by rememberSaveable { mutableIntStateOf(0) }
-    var terminal by rememberSaveable(state.selectedWorkspaceId) { mutableStateOf(false) }
+    // Creation changes the workspace before its callback selects the launch view.
+    // Keep the same state holder so that callback cannot write to a discarded one.
+    var terminal by rememberSaveable { mutableStateOf(false) }
     var createAgent by rememberSaveable { mutableStateOf(false) }
     var newProject by rememberSaveable { mutableStateOf<String?>(null) }
     val workspace = state.selectedWorkspace
@@ -139,7 +141,7 @@ fun PaseoApp(vm: AppViewModel) {
                             if (createAgent && screen != "appearance") IconButton(onClick = { createAgent = false }) { PaseoGlyph(PaseoIcons.X, "取消新建代理") }
                         }
                     }
-                    if (!state.connected && screen != "hosts" && screen != "appearance") ConnectionStrip(state) { state.host?.let(vm::connect) }
+                    if (!state.connected && screen == "chat" && !createAgent) ConnectionStrip(state) { state.host?.let(vm::connect) }
                     if (screen == "chat" && workspace != null && !explorer && !createAgent) Surface(onClick = { picker = true }, color = MaterialTheme.colorScheme.background) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             PaseoGlyph(if (terminal) PaseoIcons.SquareTerminal else PaseoIcons.provider(state.selectedAgent?.provider.orEmpty()), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -150,7 +152,7 @@ fun PaseoApp(vm: AppViewModel) {
                     }
                 }
             } }) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
+            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 contentState.SaveableStateProvider(screen) { when {
                     screen == "appearance" -> AppearanceSettingsScreen(theme, vm::setTheme)
                     screen == "scan" -> PairScanScreen(vm) { vm.cancelPairing(); vm.screen.value = "hosts" }
@@ -163,7 +165,7 @@ fun PaseoApp(vm: AppViewModel) {
                     screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { openPairing(); showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
                     screen == "chat" && workspace != null && explorer -> if (explorerTab == 0) DiffPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else FilesPane(vm, workspace.context, state.connected, Modifier.fillMaxSize())
                     screen == "chat" && workspace != null && !createAgent -> if (terminal) TerminalPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else ChatScreen(vm, state, onCreateAgent = { createAgent = true })
-                    else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject) { createAgent = false; terminal = false }
+                    else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject, onManageHosts = { navigate("hosts") }) { launchTerminal -> createAgent = false; terminal = launchTerminal }
                 } }
             }
         }

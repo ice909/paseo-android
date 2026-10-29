@@ -279,6 +279,11 @@ class Handler(BaseHTTPRequestHandler):
                 workspace = dict(WORKSPACE, id="fixture-w-" + str(len(self.workspaces)), workspaceDirectory=cwd,
                                  name=message.get("title", "New workspace"))
                 self.workspaces.append(workspace)
+                if not message.get("agent"):
+                    self.send("workspace.create.response", requestId=req, workspace=workspace, agent=None, error=None,
+                              creation=dict(phase="completed", workspace=workspace, agent=None, error=None))
+                    self.send("workspace_update", kind="upsert", workspace=workspace)
+                    return
                 config = message["agent"]["config"]
                 prompt = message["agent"].get("initialPrompt")
             else:
@@ -335,6 +340,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send("checkout.diff.get.response", requestId=req, cwd=self.agent["cwd"], error=None, files=[dict(path="Main.kt", additions=1, deletions=1, isNew=False, isDeleted=False, hunks=[dict(oldStart=1, newStart=1, oldCount=1, newCount=1, lines=[dict(type="remove", content='println("old")'), dict(type="add", content='println("Paseo")')])])])
         elif kind == "list_terminals_request":
             self.send("list_terminals_response", requestId=req, terminals=[dict(id="fixture-terminal", name="Fixture shell", cwd=self.agent["cwd"])] if self.terminal_exists else [])
+        elif kind == "branch_suggestions_request":
+            self.send("branch_suggestions_response", requestId=req, cwd=message.get("cwd"), branches=[b for b in ["main", "develop", "feature/ui"] if message.get("query", "") in b])
         elif kind == "create_terminal_request":
             self.terminal_exists = True
             self.send("create_terminal_response", requestId=req, terminal=dict(id="fixture-terminal", name="Fixture shell", cwd=self.agent["cwd"]), error=None)

@@ -199,10 +199,13 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
 
     /** Callers retain the key with their draft: a lost receipt can be retried without duplicate resources. */
     suspend fun createWorkspace(provider: String, cwd: String, model: String, mode: String, prompt: String,
-        title: String, key: String, projectId: String? = null, worktree: Boolean = false, branch: String = ""): Workspace = withContext(dispatcher) {
-        val agent = creationAgent(provider, cwd, model, mode, prompt, title)
+        title: String, key: String, projectId: String? = null, worktree: Boolean = false, branch: String = "",
+        withInitialAgent: Boolean = true, baseRef: String = "", images: List<JsonObject> = emptyList(),
+        attachments: List<JsonObject> = emptyList()): Workspace = withContext(dispatcher) {
+        require(cwd.startsWith('/')) { "请选择主机上的绝对目录" }
+        val agent = if (withInitialAgent) creationAgent(provider, cwd, model, mode, prompt, title, images, attachments) else null
         val source = if (worktree) jsonObject("kind" to "worktree", "cwd" to cwd, "projectId" to projectId,
-            "action" to "branch-off", "branchName" to branch.ifBlank { null })
+            "action" to "branch-off", "branchName" to branch.ifBlank { null }, "baseBranch" to baseRef.ifBlank { null })
             else jsonObject("kind" to "directory", "path" to cwd, "projectId" to projectId)
         val result = socket.request("workspace.create.request", "source" to source,
             "agent" to if (creationLifecycle) agent else null, "title" to title.ifBlank { null },
@@ -211,16 +214,19 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         val workspace = wireJson.decodeFromJsonElement<Workspace>(complete["workspace"] ?: throw IOException("主机未返回工作区"))
         upsertWorkspace(workspace)
         _state.update { it.copy(selectedWorkspaceId = workspace.id) }
-        if (creationLifecycle) {
+        if (creationLifecycle && withInitialAgent) {
             complete["agent"]?.takeIf { it is JsonObject }?.let { upsert(wireJson.decodeFromJsonElement<Agent>(it)); selectAgent(it.jsonObject.string("id")) }
-        } else createAgent(workspace, provider, model, mode, prompt, title, "$key:agent")
+        } else if (withInitialAgent) createAgent(workspace, provider, model, mode, prompt, title, "$key:agent", images, attachments)
+        if (!withInitialAgent) leaveAgent()
         workspace
     }
     suspend fun createAgent(workspace: Workspace, provider: String, model: String, mode: String,
-        prompt: String, title: String, key: String): Agent = withContext(dispatcher) {
-        val fields = creationAgent(provider, workspace.cwd, model, mode, prompt, title)
+        prompt: String, title: String, key: String, images: List<JsonObject> = emptyList(),
+        attachments: List<JsonObject> = emptyList()): Agent = withContext(dispatcher) {
+        val fields = creationAgent(provider, workspace.cwd, model, mode, prompt, title, images, attachments)
         val result = socket.request(if (creationLifecycle) "agent.create.request" else "create_agent_request",
             "config" to fields["config"], "workspaceId" to workspace.id, "initialPrompt" to fields["initialPrompt"],
+            "images" to fields["images"], "attachments" to fields["attachments"],
             "clientMessageId" to key, "idempotencyKey" to if (creationLifecycle) key else null, "subscribe" to false)
         val complete = finishCreation("agent", key, result)
         val agent = wireJson.decodeFromJsonElement<Agent>(complete["agent"] ?: throw IOException("主机未返回代理"))
@@ -229,11 +235,13 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         selectAgent(agent.id)
         agent
     }
-    private fun creationAgent(provider: String, cwd: String, model: String, mode: String, prompt: String, title: String): JsonObject {
+    private fun creationAgent(provider: String, cwd: String, model: String, mode: String, prompt: String, title: String,
+        images: List<JsonObject> = emptyList(), attachments: List<JsonObject> = emptyList()): JsonObject {
         require(provider.isNotBlank() && cwd.startsWith('/')) { "请选择代理并填写主机上的绝对目录" }
         return jsonObject("config" to jsonObject("provider" to provider, "cwd" to cwd,
             "model" to model.ifBlank { null }, "modeId" to mode.ifBlank { null }, "title" to title.ifBlank { null }),
-            "initialPrompt" to prompt.ifBlank { null })
+            "initialPrompt" to prompt.ifBlank { null }, "images" to images.takeIf { it.isNotEmpty() },
+            "attachments" to attachments.takeIf { it.isNotEmpty() })
     }
     private suspend fun finishCreation(kind: String, key: String, receipt: JsonObject): JsonObject {
         var snapshot = receipt.obj("creation")
@@ -260,6 +268,8 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     suspend fun commands(id: String): List<JsonObject> = socket.request("list_commands_request", "agentId" to id).array("commands").map { it.jsonObject }
     suspend fun directorySuggestions(query: String): List<JsonObject> = socket.request("directory_suggestions_request",
         "query" to query, "includeDirectories" to true, "includeFiles" to false, "limit" to 8).array("entries").map { it.jsonObject }
+    suspend fun branches(cwd: String, query: String): List<String> = socket.request("branch_suggestions_request",
+        "cwd" to cwd, "query" to query, "limit" to 50).array("branches").mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
     suspend fun forgeSearch(cwd: String, query: String): List<JsonObject> = socket.request(
         if (state.value.features.bool("forgeSearch")) "forge.search.request" else "github_search_request",
         "cwd" to cwd, "query" to query, "limit" to 20).array("items").map { it.jsonObject }

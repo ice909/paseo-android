@@ -86,13 +86,13 @@ def open_pairing():
     while time.monotonic() < deadline:
         try:
             nodes = list(tree().iter("node"))
+            if any(n.attrib.get("content-desc") == "配对链接" for n in nodes):
+                return
             welcome = any(n.attrib.get("text") == "欢迎使用 Paseo" for n in nodes)
             label = "粘贴配对链接" if welcome else "添加主机"
             target = next((n for n in nodes if n.attrib.get("text") == label or n.attrib.get("content-desc") == label), None)
             if target is not None:
                 tap(target)
-                node("配对链接", "content-desc")
-                return
         except (ET.ParseError, subprocess.CalledProcessError):
             pass
         time.sleep(.2)
@@ -276,16 +276,13 @@ def main():
     node("Native Android")
     screenshot("restored-host")
     click("在 paseo 新建工作区", "content-desc")
-    fill_labeled("名称（可选）", "Native smoke")
-    hide_keyboard()
     screenshot("new-workspace")
     click("创建工作区", "content-desc")
-    node("从一个任务开始")
-    node("Native smoke")
+    node("工作区已就绪")
+    node("New workspace")
     screenshot("created-workspace")
-    click("切换代理或终端", "content-desc")
     click("新建代理")
-    fill_labeled("名称（可选）", "Second smoke")
+    fill(0, "Second smoke")
     hide_keyboard()
     click("创建代理", "content-desc")
     node("Second smoke")
@@ -293,13 +290,13 @@ def main():
     click("工作区选项", "content-desc")
     click("归档会话")
     click("归档")
-    node("Native smoke")
+    node("New workspace")
     click("工作区选项", "content-desc")
     click("归档工作区")
     click("归档")
     click("打开侧栏", "content-desc")
     node("Native Android")
-    assert not any(n.attrib.get("text") == "Native smoke" for n in tree().iter("node"))
+    assert not any(n.attrib.get("text") == "New workspace" for n in tree().iter("node"))
     screenshot("archived-workspace")
     if args.deny_lan_once and int(adb("shell", "getprop", "ro.build.version.sdk").strip()) >= 37:
         assert denied_lan_once, "Android 17 LAN permission denial was not exercised"

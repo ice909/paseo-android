@@ -49,11 +49,16 @@ class WorkspaceFlowTest {
             val initial = awaitCatalog(repository)
             assertEquals(2, initial.projects.size)
             assertNull(initial.workspaces.single().gitRuntime)
-            val created = repository.createWorkspace("claude", "/project", "sonnet", "plan", "Review this", "Review", "intent-1", "p1", true, "feature")
+            val image = jsonObject("data" to "aGVsbG8=", "mimeType" to "image/png")
+            val attachment = jsonObject("type" to "file", "name" to "notes.md")
+            val created = repository.createWorkspace("claude", "/project", "sonnet", "plan", "Review this", "Review", "intent-1", "p1", true, "feature", baseRef = "develop", images = listOf(image), attachments = listOf(attachment))
             assertEquals("w1", created.id)
             val request = requests.first { it.string("type") == "workspace.create.request" }
             assertEquals("intent-1", request.string("idempotencyKey"))
             assertEquals("worktree", request.obj("source").string("kind"))
+            assertEquals("develop", request.obj("source").string("baseBranch"))
+            assertEquals(image, request.obj("agent").array("images").single())
+            assertEquals(attachment, request.obj("agent").array("attachments").single())
             assertEquals("plan", request.obj("agent").obj("config").string("modeId"))
             assertEquals("Review this", request.obj("agent").string("initialPrompt"))
             val selected = withTimeout(5_000) { repository.state.first { it.selectedAgentId == "a1" } }
@@ -69,6 +74,18 @@ class WorkspaceFlowTest {
             val removed = withTimeout(5_000) { repository.state.first { it.workspaces.isEmpty() } }
             assertEquals(2, removed.emptyProjects.size)
             assertNull(removed.selectedWorkspaceId)
+        } finally { repository.close(); server.close() }
+    }
+    @Test fun emptyWorkspaceDoesNotCreateOrSelectAnAgent() = runBlocking {
+        val server = server(); val repository = PaseoRepository()
+        try {
+            repository.connect(Host(name = "Test", url = server.url("/ws").toString())); awaitCatalog(repository)
+            repository.createWorkspace("", "/project", "", "", "", "", "empty-intent", withInitialAgent = false)
+            val request = requests.first { it.string("type") == "workspace.create.request" }
+            assertNull(request["agent"])
+            assertEquals("/project", request.obj("source").string("path"))
+            assertFalse(requests.any { it.string("type") in listOf("agent.create.request", "create_agent_request") })
+            assertNull(repository.state.value.selectedAgentId)
         } finally { repository.close(); server.close() }
     }
     @Test fun failedCreationKeepsProvisionedWorkspaceAndDoesNotSelectAnAgent() = runBlocking {

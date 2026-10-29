@@ -50,7 +50,7 @@ class ConversationAudio(
         scope.launch { repository.state.map { Triple(it.host?.id, it.connected, it.selectedAgentId) }.distinctUntilChanged().collect { (host, connected, selected) ->
             val current = mutable.value
             val key = current.key ?: return@collect
-            if (host != key.hostId || selected != key.agentId) { cancel(); return@collect }
+            if (host != key.hostId || (!key.agentId.startsWith("workspace-draft:") && selected != key.agentId)) { cancel(); return@collect }
             if (!connected) {
                 ready = false; streamId = ""; deadline?.cancel()
                 if (current.mode == "voice") cancel() else if (current.phase == "uploading") mutable.update { it.copy(phase = "failed", error = "连接已断开，录音已保留，可重试") }
