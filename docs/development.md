@@ -49,6 +49,8 @@ run_gradle :app:assembleRelease \
 
 覆盖安装需要沿用相同签名。`benchmark` 同样需要将编译、Lint 与 R8 分开执行，不作为正式发布包。
 
+GitHub Actions 在 `master` 的 push 构建完成后，使用 `ANDROID_RELEASE_KEYSTORE`（Base64 编码的 PKCS#12 密钥库）和 `ANDROID_RELEASE_PASSWORD` 两个仓库 Secrets 为 Release APK 签名，别名为 `paseo-release`。签名产物保留 5 天；其他分支和 pull request 只执行构建检查，不使用签名密钥。应在 GitHub 外安全备份密钥库和密码；更换签名密钥会影响现有安装的覆盖更新。不得将密钥、密码或其编码结果提交到仓库。
+
 ## 日常验证
 
 按改动范围选最短路径，不把下表当成必须依次执行的清单：

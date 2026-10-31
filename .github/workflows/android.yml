@@ -21,10 +21,33 @@ jobs:
           }
           run_gradle :core:test
           run_gradle :app:testDebugUnitTest
-          run_gradle :app:assembleDebug
           run_gradle :app:lintDebug
-          run_gradle :app:assembleBenchmark
+          run_gradle :app:compileReleaseKotlin
+          run_gradle :app:lintRelease
+          run_gradle :app:assembleRelease \
+            -x :app:lintVitalRelease -x :app:lintVitalAnalyzeRelease -x :app:lintVitalReportRelease
+      - name: Sign release APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          ANDROID_RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
+          ANDROID_RELEASE_PASSWORD: ${{ secrets.ANDROID_RELEASE_PASSWORD }}
+        run: |
+          set -eu
+          test -n "$ANDROID_RELEASE_KEYSTORE" && test -n "$ANDROID_RELEASE_PASSWORD"
+          umask 077
+          keystore="$RUNNER_TEMP/paseo-release.jks"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE" | base64 --decode > "$keystore"
+          signer="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          "$signer" sign --ks "$keystore" --ks-key-alias paseo-release \
+            --ks-pass env:ANDROID_RELEASE_PASSWORD --key-pass env:ANDROID_RELEASE_PASSWORD \
+            --out app/build/outputs/apk/release/paseo-release.apk \
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          "$signer" verify --verbose app/build/outputs/apk/release/paseo-release.apk
       - uses: actions/upload-artifact@v7.0.2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         with:
-          name: paseo-native-apk
-          path: app/build/outputs/apk/**/*.apk
+          name: paseo-native-release
+          path: app/build/outputs/apk/release/paseo-release.apk
+          if-no-files-found: error
+          retention-days: 5
