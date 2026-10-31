@@ -72,7 +72,7 @@ fun SidebarUsage(repository: PaseoRepository, state: PaseoState, active: Boolean
             }
         }
     }
-    if (expanded) ModalBottomSheet(onDismissRequest = { onExpanded(false) }, containerColor = sidebarColor()) {
+    if (expanded) ModalBottomSheet(onDismissRequest = { onExpanded(false) }, containerColor = palette.surface0, contentColor = palette.foreground) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("用量", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))

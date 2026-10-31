@@ -12,6 +12,8 @@
 | 单选、多选、自定义回答 | `QuestionForm.kt`（app/core） | `components/question-form-card-core.ts` |
 | 改动 / 文件切换与文件编辑 | `WorkspacePanes.kt` | 官方 workspace explorer |
 
+深色配色按官方语义层级使用：Dark 页面底色 `surface0=#181B1A`，聊天工作区 `surface1=#1E2120`，代码块与行内代码 `surface2=#272A29`，用户气泡 `surface3=#434645`；正文 `foreground=#FAFAFA`、次要文字 `foregroundMuted=#A1A5A4`，composer 占位文字使用 `surface4=#595B5B`。Compose 禁用 Material 色调叠加，菜单统一使用 `surface1` 与 `borderAccent`，移动端面板外壳使用 `surface0`，模型面板内容使用 `surfaceSidebar`，列表行继承所在面板背景。文件面板及其文件行使用 `surfaceSidebar=#141716`；启动窗口的静态回退底色使用 Dark 的 `surface0`，Activity 创建后按已保存主题立即更新。Markdown 引用使用 80% 正文色，选区沿用官方终端选区的白色 20% / 黑色 15%（深色 / 浅色）；其他主题使用同名语义色。
+
 协议以 `packages/protocol/src/messages.ts` 与 `packages/client/src/creation/index.ts` 为准：
 
 - `fetch_workspaces_request`、`workspace_update`：工作区目录、空项目、分页、实时修改 / 移除。

@@ -34,7 +34,7 @@ fun AppearanceSettingsScreen(preference: ThemePreference, onTheme: (ThemePrefere
                             Text(preference.label, Modifier.padding(horizontal = 10.dp))
                             PaseoGlyph(PaseoIcons.ChevronDown, null, Modifier.size(16.dp))
                         }
-                        DropdownMenu(expanded, { expanded = false }, modifier = Modifier.widthIn(min = 200.dp)) {
+                        PaseoDropdownMenu(expanded, { expanded = false }, modifier = Modifier.widthIn(min = 200.dp)) {
                             ThemePreference.entries.forEach { option ->
                                 if (option == ThemePreference.ZINC) HorizontalDivider(Modifier.padding(vertical = 4.dp))
                                 DropdownMenuItem(text = { Text(option.label) },
@@ -88,8 +88,8 @@ private fun AppearancePreview() {
             }
             Column(Modifier.weight(1f).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("修复登录页面", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Text("帮我检查一下登录流程。", fontSize = 12.sp,
-                    modifier = Modifier.fillMaxWidth().background(palette.surface2, RoundedCornerShape(6.dp)).padding(10.dp))
+                Text("帮我检查一下登录流程。", fontSize = 12.sp, color = palette.foreground,
+                    modifier = Modifier.fillMaxWidth().background(palette.surface3, RoundedCornerShape(6.dp)).padding(10.dp))
                 Text("已完成修改，所有检查通过。", fontSize = 12.sp)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PaseoGlyph(PaseoIcons.CircleCheck, null, Modifier.size(13.dp), tint = palette.statusSuccess)
@@ -97,7 +97,7 @@ private fun AppearancePreview() {
                     Text("+12", fontSize = 11.sp, color = palette.statusSuccess)
                     Text("−3", fontSize = 11.sp, color = palette.statusDanger)
                 }
-                Column(Modifier.fillMaxWidth().background(palette.surface0, RoundedCornerShape(6.dp)).padding(10.dp)) {
+                Column(Modifier.fillMaxWidth().background(palette.surface2, RoundedCornerShape(6.dp)).padding(10.dp)) {
                     Text("− const ready = false", color = palette.diffDeletion, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
                     Text("+ const ready = true", color = palette.diffAddition, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
                 }

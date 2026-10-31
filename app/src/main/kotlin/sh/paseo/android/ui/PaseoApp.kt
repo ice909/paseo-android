@@ -137,7 +137,7 @@ fun PaseoApp(vm: AppViewModel) {
                                 }
                                 Box {
                                     IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Ellipsis, "工作区选项", Modifier.size(16.dp)) }
-                                    DropdownMenu(menu, { menu = false }) {
+                                    PaseoDropdownMenu(menu, { menu = false }) {
                                         DropdownMenuItem(text = { Text("重命名工作区") }, onClick = { menu = false; rename = "workspace" })
                                         DropdownMenuItem(text = { Text(if (workspace.pinnedAt == null) "置顶工作区" else "取消置顶") }, onClick = { menu = false; vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } })
                                         DropdownMenuItem(text = { Text("归档工作区") }, onClick = { menu = false; archive = "workspace" })
@@ -160,7 +160,7 @@ fun PaseoApp(vm: AppViewModel) {
         Scaffold(contentWindowInsets = if (welcome || screen == "scan") WindowInsets(0, 0, 0, 0)
             else if (floatingHeader) ScaffoldDefaults.contentWindowInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
             else ScaffoldDefaults.contentWindowInsets,
-            snackbarHost = { SnackbarHost(snackbar) }, containerColor = if (screen == "chat") LocalPaseoPalette.current.surfaceWorkspace else MaterialTheme.colorScheme.background,
+            snackbarHost = { SnackbarHost(snackbar) }, containerColor = if (compactWorkspace) LocalPaseoPalette.current.surfaceWorkspace else MaterialTheme.colorScheme.background,
             topBar = { if (!floatingHeader) header() }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 contentState.SaveableStateProvider(screen) { when {
@@ -202,17 +202,18 @@ fun PaseoApp(vm: AppViewModel) {
             }
         })
     }
-    if (picker && workspace != null) ModalBottomSheet(onDismissRequest = { picker = false }) {
+    if (picker && workspace != null) ModalBottomSheet(onDismissRequest = { picker = false },
+        containerColor = LocalPaseoPalette.current.surface0, contentColor = LocalPaseoPalette.current.foreground) {
         Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
             Text("代理和终端", Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall)
             state.workspaceAgents.forEach { agent ->
-                ListItem(headlineContent = { Text(agent.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) }, supportingContent = { Text("${agent.provider} · ${agentStatus(agent)}") },
+                ListItem(colors = paseoListItemColors(), headlineContent = { Text(agent.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) }, supportingContent = { Text("${agent.provider} · ${agentStatus(agent)}") },
                     leadingContent = { Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { PaseoGlyph(PaseoIcons.provider(agent.provider), modifier = Modifier.size(16.dp)); StatusDot(agent.pendingPermissions.isNotEmpty(), agent.running, agent.status == "error") } },
                     trailingContent = { if (agent.id == state.selectedAgentId && !terminal) PaseoGlyph(PaseoIcons.Check, null) },
                     modifier = Modifier.clickable { vm.openAgent(agent); terminal = false; picker = false })
             }
-            ListItem(headlineContent = { Text("新建代理") }, leadingContent = { PaseoGlyph(PaseoIcons.Plus, null) }, modifier = Modifier.clickable { createAgent = true; picker = false })
-            ListItem(headlineContent = { Text("终端") }, leadingContent = { PaseoGlyph(PaseoIcons.SquareTerminal, null) }, modifier = Modifier.clickable { terminal = true; picker = false })
+            ListItem(colors = paseoListItemColors(), headlineContent = { Text("新建代理") }, leadingContent = { PaseoGlyph(PaseoIcons.Plus, null) }, modifier = Modifier.clickable { createAgent = true; picker = false })
+            ListItem(colors = paseoListItemColors(), headlineContent = { Text("终端") }, leadingContent = { PaseoGlyph(PaseoIcons.SquareTerminal, null) }, modifier = Modifier.clickable { terminal = true; picker = false })
         }
     }
     if (showHostEditor) {

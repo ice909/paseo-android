@@ -37,7 +37,7 @@ fun ChatComposerMenu(behavior: SendBehavior, onBehavior: (SendBehavior) -> Unit,
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Plus, "添加附件和发送选项", Modifier.size(18.dp)) }
-        DropdownMenu(open, { open = false }) {
+        PaseoDropdownMenu(open, { open = false }) {
             DropdownMenuItem(text = { Text("添加图片") }, leadingIcon = { PaseoGlyph(PaseoIcons.ImagePlus) }, onClick = { open = false; onImages() })
             DropdownMenuItem(text = { Text("添加文件") }, leadingIcon = { PaseoGlyph(PaseoIcons.Paperclip) }, onClick = { open = false; onFiles() })
             DropdownMenuItem(text = { Text("Issue / Pull Request") }, leadingIcon = { PaseoGlyph(PaseoIcons.Link) }, onClick = { open = false; onForge() })
@@ -171,7 +171,7 @@ fun ChatUserMessage(row: TimelineRow, localAttachments: List<ChatAttachment>, ag
                 agent.capabilities.bool(when (mode) { "conversation" -> "supportsRewindConversation"; "files" -> "supportsRewindFiles"; else -> "supportsRewindBoth" }) }
             if (row.messageId.isNotBlank() && modes.isNotEmpty()) Box {
                 IconButton(onClick = { rewindMenu = true }, enabled = connected, modifier = Modifier.size(22.dp)) { PaseoGlyph(PaseoIcons.Undo2, "回退到这条消息", Modifier.size(14.dp)) }
-                DropdownMenu(rewindMenu, { rewindMenu = false }) {
+                PaseoDropdownMenu(rewindMenu, { rewindMenu = false }) {
                     modes.forEach { (mode, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { rewindMenu = false; onRewind(mode) }) }
                 }
             }
@@ -243,7 +243,7 @@ fun ForgeAttachmentPicker(vm: sh.paseo.android.AppViewModel, agent: Agent, moder
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp)) }
             Column(Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState())) {
-                items.forEach { item -> ListItem(headlineContent = { Text("#${item.long("number")} ${item.string("title")}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                items.forEach { item -> ListItem(colors = paseoListItemColors(), headlineContent = { Text("#${item.long("number")} ${item.string("title")}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(item.string("url"), maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.clickable { onSelect(forgeAttachment(item, modern)) }) }
                 if (!loading && error == null && items.isEmpty()) Text("没有匹配项", Modifier.padding(vertical = 12.dp))
             }

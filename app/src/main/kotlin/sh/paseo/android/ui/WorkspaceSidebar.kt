@@ -82,7 +82,7 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                 Text("Workspaces", fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.weight(1f))
                 Box {
                     SidebarIcon(PaseoIcons.SlidersHorizontal, "工作区显示设置", { preferences = true }, size = 16)
-                    DropdownMenu(expanded = preferences, onDismissRequest = { preferences = false }) {
+                    PaseoDropdownMenu(expanded = preferences, onDismissRequest = { preferences = false }) {
                         DropdownMenuItem(text = { Text("搜索工作区") }, onClick = { preferences = false; search = !search; if (!search) query = "" })
                         DropdownMenuItem(text = { Text(if (alphabetical) "按最近活动排序" else "按项目名称排序") }, onClick = { alphabetical = !alphabetical; preferences = false })
                         DropdownMenuItem(text = { Text("折叠所有项目") }, onClick = { state.projects.forEach { collapsed[it.projectId] = true }; preferences = false })
@@ -114,7 +114,7 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                                 SidebarIcon(PaseoIcons.Plus, "在 ${project.projectDisplayName} 新建工作区", { onNew(project.projectId) }, size = 16)
                                 Box {
                                     SidebarIcon(PaseoIcons.EllipsisVertical, "${project.projectDisplayName} 项目菜单", { menu = true }, size = 16)
-                                    DropdownMenu(menu, { menu = false }) {
+                                    PaseoDropdownMenu(menu, { menu = false }) {
                                         DropdownMenuItem(text = { Text("新建工作区") }, onClick = { menu = false; onNew(project.projectId) })
                                         DropdownMenuItem(text = { Text(if (collapsed[project.projectId] == true) "展开项目" else "折叠项目") }, onClick = { menu = false; collapsed[project.projectId] = collapsed[project.projectId] != true })
                                         DropdownMenuItem(text = { Text("复制项目路径") }, onClick = { menu = false; clipboard.setText(AnnotatedString(project.projectRootPath)) })
@@ -133,7 +133,7 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                                     if (workspace.pinnedAt != null) PaseoGlyph(PaseoIcons.Pin, "已固定", Modifier.size(12.dp))
                                     Box {
                                         SidebarIcon(PaseoIcons.EllipsisVertical, "${workspace.name} 工作区菜单", { menu = true }, size = 16)
-                                        DropdownMenu(menu, { menu = false }) {
+                                        PaseoDropdownMenu(menu, { menu = false }) {
                                             DropdownMenuItem(text = { Text("重命名") }, enabled = state.connected, onClick = { menu = false; edit = workspace })
                                             DropdownMenuItem(text = { Text(if (workspace.pinnedAt == null) "固定" else "取消固定") }, enabled = state.connected,
                                                 onClick = { menu = false; vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } })

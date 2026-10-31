@@ -89,7 +89,8 @@ fun FilesPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, mod
                 if (entries.isEmpty() && !loading) EmptyState(PaseoIcons.FolderOpen, "目录为空", path.ifBlank { agent.cwd }, Modifier.weight(1f))
                 else LazyColumn(Modifier.fillMaxSize()) {
                     items(entries, key = { it.string("path") }) { entry ->
-                        Surface(onClick = { path = entry.string("path"); openFile = entry.string("kind") != "directory" }, color = MaterialTheme.colorScheme.background) {
+                        Surface(onClick = { path = entry.string("path"); openFile = entry.string("kind") != "directory" },
+                            color = LocalPaseoPalette.current.surfaceSidebar, contentColor = LocalPaseoPalette.current.foreground) {
                             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 FileGlyph(entry.string("name"), entry.string("kind") == "directory")
                                 Text(entry.string("name"), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -224,7 +225,7 @@ fun TerminalPane(vm: AppViewModel, agent: WorkspaceContext, connected: Boolean, 
             Box(Modifier.weight(1f)) {
                 var expanded by remember { mutableStateOf(false) }
                 TextButton(onClick = { expanded = true }) { PaseoGlyph(PaseoIcons.SquareTerminal, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text(terminals.find { it.string("id") == selectedId }?.string("name")?.ifBlank { "终端" } ?: "文本终端"); PaseoGlyph(PaseoIcons.ChevronDown, null) }
-                DropdownMenu(expanded, { expanded = false }) { terminals.forEach { terminal -> DropdownMenuItem(text = { Text(terminal.string("name").ifBlank { terminal.string("id").take(8) }) }, onClick = { selectedId = terminal.string("id"); expanded = false }) } }
+                PaseoDropdownMenu(expanded, { expanded = false }) { terminals.forEach { terminal -> DropdownMenuItem(text = { Text(terminal.string("name").ifBlank { terminal.string("id").take(8) }) }, onClick = { selectedId = terminal.string("id"); expanded = false }) } }
             }
             if (selectedId.isNotBlank()) IconButton(onClick = { confirmClose = true }, enabled = connected && !loading) { PaseoGlyph(PaseoIcons.X, "关闭终端") }
             IconButton(onClick = { scope.launch {

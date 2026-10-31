@@ -153,7 +153,7 @@ private fun ToolSheet(title: String, icon: Int, onClose: () -> Unit, content: @C
     val fraction by animateFloatAsState(if (tall) .95f else .6f, label = "tool-sheet-height")
     val palette = LocalPaseoPalette.current
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = sheet, containerColor = palette.surface2,
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = sheet, containerColor = palette.surface0,
         contentColor = palette.foreground, scrimColor = Color.Black.copy(alpha = .5f), shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         dragHandle = null) {
         Column(Modifier.fillMaxHeight(fraction)) {

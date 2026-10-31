@@ -45,7 +45,8 @@ fun SidebarHistory(vm: AppViewModel, state: PaseoState, onDismiss: () -> Unit, o
         catch (failure: Exception) { error = failure.message ?: "读取历史失败" }
         finally { loading = false }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = sidebarColor(), sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = LocalPaseoPalette.current.surface0,
+        contentColor = LocalPaseoPalette.current.foreground, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).padding(horizontal = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (preview != null) IconButton(onClick = { preview = null }) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回历史", Modifier.size(18.dp)) }

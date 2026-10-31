@@ -72,7 +72,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
     val queue = running && behavior == SendBehavior.Queue
     BackHandler(expanded && onExpand != null) { onExpand?.invoke() }
     Surface(modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-        shape = RoundedCornerShape(16.dp), color = palette.surface1,
+        shape = RoundedCornerShape(16.dp), color = palette.surface1, contentColor = palette.foreground,
         border = BorderStroke(1.dp, palette.borderAccent)) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).then(if (expanded) Modifier.fillMaxHeight() else Modifier), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             attachments()
@@ -111,7 +111,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
                                 }
                             }
                         }, decorationBox = { inner ->
-                        if (value.isEmpty()) PaseoText(placeholder, color = palette.foregroundExtraMuted)
+                        if (value.isEmpty()) PaseoText(placeholder, color = palette.surface4)
                         inner()
                     })
                 if (onExpand != null && (expanded || renderedLines > 2)) IconButton(onClick = onExpand, modifier = Modifier.align(Alignment.TopEnd).offset(x = 36.dp).size(28.dp)) {
@@ -153,7 +153,7 @@ fun ComposerChoice(value: String, choices: List<Pair<String, String>>, enabled: 
             PaseoText(value, style = PaseoUiText.copy(fontSize = 14.sp), maxLines = 1, color = LocalPaseoPalette.current.foregroundMuted)
             PaseoGlyph(PaseoIcons.ChevronDown, null, Modifier.size(14.dp), tint = LocalPaseoPalette.current.foregroundExtraMuted)
         }
-        DropdownMenu(expanded, { expanded = false }, modifier = Modifier.heightIn(max = 340.dp)) {
+        PaseoDropdownMenu(expanded, { expanded = false }, modifier = Modifier.heightIn(max = 340.dp)) {
             choices.forEach { (id, label) -> DropdownMenuItem(text = { Text(label) }, trailingIcon = { if (label == value) PaseoGlyph(PaseoIcons.Check, modifier = Modifier.size(16.dp)) }, onClick = { onChoose(id); expanded = false }) }
         }
     }

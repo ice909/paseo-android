@@ -7,12 +7,14 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.TextLinkStyles
-import androidx.compose.ui.graphics.Color
+import sh.paseo.android.appearance.PaseoPalette
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -66,7 +68,7 @@ private fun parseBlocks(text: String): List<Block> {
 }
 
 private val inlinePattern = Regex("""(`[^`]+`|\*\*[^*]+\*\*|\*[^*\n]+\*|\[[^\]]+\]\(https?://[^\s)]+\)|https?://[^\s<>]+)""")
-private fun inlineText(text: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
+private fun inlineText(text: String, palette: PaseoPalette): AnnotatedString = buildAnnotatedString {
     var end = 0
     inlinePattern.findAll(text).forEach { match ->
         append(text.substring(end, match.range.first))
@@ -75,14 +77,15 @@ private fun inlineText(text: String, linkColor: Color): AnnotatedString = buildA
             value.startsWith("[") -> {
                 val label = value.substringAfter('[').substringBefore("](")
                 val url = value.substringAfter("](").dropLast(1)
-                withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = linkColor)))) { append(label) }
+                withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = palette.accentBright)))) { append(label) }
             }
             value.startsWith("http") -> {
                 val url = value.trimEnd('.', ',', ';', ')')
-                withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = linkColor)))) { append(url) }
+                withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = palette.accentBright)))) { append(url) }
                 append(value.substring(url.length))
             }
-            value.startsWith('`') -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp)) { append(value.drop(1).dropLast(1)) }
+            value.startsWith('`') -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp,
+                color = palette.foreground, background = palette.surface2)) { append(value.drop(1).dropLast(1)) }
             value.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(value.drop(2).dropLast(2)) }
             else -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(value.drop(1).dropLast(1)) }
         }
@@ -112,15 +115,18 @@ private fun MarkdownContent(text: String, image: @Composable (String, String, In
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             blocks.forEachIndexed { index, block -> when (block.type) {
                 "code" -> CodeBlock(block.text, language = block.language)
-                "heading" -> Text(inlineText(block.text, palette.accentBright), style = PaseoUiText.copy(fontSize = when (block.language) {
+                "heading" -> Text(inlineText(block.text, palette), style = PaseoUiText.copy(fontSize = when (block.language) {
                     "1" -> 24.sp; "2" -> 21.sp; "3" -> 18.sp; "4" -> 17.sp; else -> 15.sp
-                }, lineHeight = when (block.language) { "1" -> 31.sp; "2" -> 27.sp; "3" -> 23.sp; else -> 20.sp }), fontWeight = FontWeight.Bold)
-                "quote" -> Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)) {
-                    Text(inlineText(block.text, palette.accentBright), Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                }, lineHeight = when (block.language) { "1" -> 31.sp; "2" -> 27.sp; "3" -> 23.sp; else -> 20.sp }), fontWeight = FontWeight.Bold,
+                    color = if (block.language == "6") palette.foregroundMuted else palette.foreground)
+                "quote" -> Surface(color = palette.surface1, shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)) {
+                    Text(inlineText(block.text, palette), Modifier.drawBehind {
+                        drawRect(palette.surface2, size = Size(3.dp.toPx(), size.height))
+                    }.padding(12.dp), color = palette.foreground.copy(alpha = .8f), style = PaseoUiText, lineHeight = 21.sp)
                 }
                 "divider" -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 "image" -> image(block.text, block.language, index)
-                else -> Text(inlineText(block.text, palette.accentBright), style = PaseoUiText, lineHeight = 21.sp)
+                else -> Text(inlineText(block.text, palette), style = PaseoUiText, color = palette.foreground, lineHeight = 21.sp)
             } }
         }
     }
@@ -129,16 +135,18 @@ private fun MarkdownContent(text: String, image: @Composable (String, String, In
 @Suppress("DEPRECATION")
 @Composable
 fun CodeBlock(code: String, modifier: Modifier = Modifier, language: String = "") {
+    val palette = LocalPaseoPalette.current
     val clipboard = LocalClipboardManager.current
     var expanded by remember(code.length > 16_000) { mutableStateOf(false) }
-    Surface(modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+    Surface(modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp), color = palette.surface2,
+        contentColor = palette.foreground, border = androidx.compose.foundation.BorderStroke(1.dp, palette.border)) {
         Column {
             Row(Modifier.fillMaxWidth().padding(start = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text(language.ifBlank { "text" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 IconButton(onClick = { clipboard.setText(AnnotatedString(code)) }, modifier = Modifier.size(36.dp)) { PaseoGlyph(PaseoIcons.Copy, "复制代码", Modifier.size(15.dp)) }
             }
             SelectionContainer {
-                Text(if (expanded) code else code.take(16_000), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
+                Text(if (expanded) code else code.take(16_000), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, color = palette.foreground,
                     lineHeight = 19.sp, modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 12.dp))
             }
             if (!expanded && code.length > 16_000) TextButton(onClick = { expanded = true }) { Text("展开完整内容") }

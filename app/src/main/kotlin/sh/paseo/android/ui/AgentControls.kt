@@ -2,6 +2,7 @@
 package sh.paseo.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -42,10 +43,10 @@ fun CompactAgentControls(agent: Agent, models: List<ModelOption>, enabled: Boole
     if (!open) return
     // Keep nested choices in the same sheet so Back returns to the settings, not to the workspace.
     ModalBottomSheet(onDismissRequest = { open = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = palette.surface1, contentColor = palette.foreground) {
+        containerColor = palette.surface0, contentColor = palette.foreground) {
         BackHandler(page.isNotEmpty()) { page = "" }
-        Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).background(palette.surfaceSidebar).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+            Row(Modifier.fillMaxWidth().background(palette.surface0).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (page.isNotEmpty()) IconButton(onClick = { page = "" }) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回模型设置", Modifier.size(18.dp)) }
                 Text(when (page) { "model" -> "模型"; "thinking" -> "思考强度"; "mode" -> "权限模式"; "" -> "模型设置"; else -> agent.features.find { it.string("id") == page }?.string("label").orEmpty() }, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 IconButton(onClick = { open = false }) { PaseoGlyph(PaseoIcons.X, "关闭模型设置", Modifier.size(18.dp)) }
@@ -64,7 +65,7 @@ fun CompactAgentControls(agent: Agent, models: List<ModelOption>, enabled: Boole
                     if (feature.string("type") == "toggle") ListItem(
                         headlineContent = { Text(feature.string("label")) },
                         trailingContent = { Switch(feature.bool("value"), { onFeature(id, JsonPrimitive(it)) }, enabled = enabled) },
-                        colors = ListItemDefaults.colors(containerColor = palette.surface1))
+                        colors = paseoListItemColors())
                     else if (feature.string("type") == "select") {
                         val value = feature.array("options").mapNotNull { it as? JsonObject }.find { it.string("id") == feature.string("value") }
                         ControlSettingRow(feature.string("label"), value?.string("label").orEmpty(), null, enabled) { page = id }
@@ -82,7 +83,7 @@ fun CompactAgentControls(agent: Agent, models: List<ModelOption>, enabled: Boole
                     ListItem(headlineContent = { Text(option.displayName) },
                         supportingContent = option.description?.let { description -> { Text(description) } },
                         trailingContent = { if (option.id == selected) PaseoGlyph(PaseoIcons.Check, modifier = Modifier.size(16.dp)) },
-                        colors = ListItemDefaults.colors(containerColor = palette.surface1),
+                        colors = paseoListItemColors(),
                         modifier = Modifier.clickable(enabled = enabled) {
                             when (page) { "model" -> onModel(option.id); "thinking" -> onThinking(option.id); "mode" -> onMode(option.id); else -> onFeature(page, JsonPrimitive(option.id)) }
                             page = ""
@@ -99,6 +100,6 @@ private fun ControlSettingRow(label: String, value: String, icon: Int?, enabled:
     ListItem(headlineContent = { Text(label) }, supportingContent = { Text(value) },
         leadingContent = icon?.let { { PaseoGlyph(it, modifier = Modifier.size(18.dp)) } },
         trailingContent = { PaseoGlyph(PaseoIcons.ChevronRight, modifier = Modifier.size(16.dp)) },
-        colors = ListItemDefaults.colors(containerColor = LocalPaseoPalette.current.surface1),
+        colors = paseoListItemColors(),
         modifier = Modifier.clickable(enabled = enabled, onClick = onClick))
 }

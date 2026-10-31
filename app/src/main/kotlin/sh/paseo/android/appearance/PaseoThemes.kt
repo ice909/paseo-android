@@ -43,6 +43,7 @@ data class PaseoPalette(
     val ring: Color,
 ) {
     val surfaceWorkspace: Color get() = if (dark) surface1 else surface0
+    val textSelectionBackground: Color get() = if (dark) Color.White.copy(alpha = .2f) else Color.Black.copy(alpha = .15f)
     val primary: Color get() = if (dark) foreground else Color(0xFF18181B)
     val onPrimary: Color get() = if (dark) surface0 else Color(0xFFFAFAFA)
     val statusSuccess: Color get() = if (dark) Color(0xFF6CB17B) else Color(0xFF3E704A)

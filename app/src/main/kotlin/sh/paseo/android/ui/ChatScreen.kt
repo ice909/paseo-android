@@ -230,14 +230,14 @@ private fun ChatAutocomplete(vm: AppViewModel, state: PaseoState, agent: Agent, 
     Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
         if (before.startsWith('/') && !before.contains(' ') && !before.contains('\n')) {
             commands.filter { it.string("name").removePrefix("/").contains(before.removePrefix("/"), true) }.take(8).forEach { command ->
-                ListItem(headlineContent = { Text("/" + command.string("name").removePrefix("/")) }, supportingContent = { Text(command.string("description"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                ListItem(colors = paseoListItemColors(), headlineContent = { Text("/" + command.string("name").removePrefix("/")) }, supportingContent = { Text(command.string("description"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.clickable { val replacement = "/" + command.string("name").removePrefix("/") + " "; onText(replacement + after, replacement.length) })
             }
         }
         if (mention != null) {
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error) }
-            files.take(8).forEach { file -> ListItem(headlineContent = { Text(file.string("path"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            files.take(8).forEach { file -> ListItem(colors = paseoListItemColors(), headlineContent = { Text(file.string("path"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 leadingContent = { FileGlyph(file.string("path"), file.string("kind") == "directory") }, modifier = Modifier.clickable {
                     val path = file.string("path")
                     val prefix = before.substring(0, before.lastIndexOf('@'))

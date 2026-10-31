@@ -34,10 +34,12 @@ fun PaseoTheme(preference: ThemePreference = ThemePreference.AUTO, content: @Com
     val systemDark = isSystemInDarkTheme()
     val palette = remember(preference, systemDark) { PaseoThemes.resolve(preference, systemDark) }
     val colors = remember(palette) { palette.materialColors() }
-    val selection = remember(palette) { TextSelectionColors(palette.accentBright, palette.accentBright.copy(alpha = .25f)) }
+    val selection = remember(palette) { TextSelectionColors(palette.foreground, palette.textSelectionBackground) }
     CompositionLocalProvider(LocalPaseoPalette provides palette) {
         MaterialTheme(colorScheme = colors) {
             CompositionLocalProvider(LocalTextSelectionColors provides selection,
+                // Official surfaces use literal theme tokens, without Material's elevation overlay.
+                LocalTonalElevationEnabled provides false,
                 LocalContentColor provides palette.foreground, content = content)
         }
     }
