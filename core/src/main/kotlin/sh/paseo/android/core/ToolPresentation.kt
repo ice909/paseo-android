@@ -3,6 +3,12 @@ package sh.paseo.android.core
 import java.time.Instant
 import kotlinx.serialization.json.*
 
+enum class ConversationDisplayMode {
+    Full,
+    CollapseToolCalls,
+    CollapseTurns,
+}
+
 /** Mirrors the official tool-call display, grouping and turn membership rules. */
 data class ToolDisplay(val name: String, val summary: String, val error: String?, val canOpen: Boolean, val loadingDetails: Boolean)
 

@@ -51,8 +51,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val previewUpdates = PreviewUpdates(application)
     val previewUpdateState = MutableStateFlow(PreviewUpdateState())
     val sendBehavior = MutableStateFlow(chatStore.behavior)
-    val collapseTurns = MutableStateFlow(chatStore.collapseTurns)
-    fun setCollapseTurns(value: Boolean) { collapseTurns.value = value; chatStore.collapseTurns = value }
+    val conversationDisplayMode = MutableStateFlow(chatStore.conversationDisplayMode)
+    fun setConversationDisplayMode(value: ConversationDisplayMode) {
+        conversationDisplayMode.value = value
+        chatStore.conversationDisplayMode = value
+    }
     val modEnter = MutableStateFlow(chatStore.modEnter)
     val homeSubmitRequests = MutableSharedFlow<ConversationKey>(extraBufferCapacity = 1)
     private val uploadedAttachments = mutableMapOf<Pair<String, String>, kotlinx.serialization.json.JsonObject>()

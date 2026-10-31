@@ -33,7 +33,7 @@ import kotlinx.coroutines.withContext
 import sh.paseo.android.core.*
 
 @Composable
-fun ChatComposerMenu(behavior: SendBehavior, onBehavior: (SendBehavior) -> Unit, onFiles: () -> Unit, onImages: () -> Unit, onVoice: () -> Unit = {}, onForge: () -> Unit = {}, collapse: Boolean = true, onCollapse: () -> Unit = {}) {
+fun ChatComposerMenu(behavior: SendBehavior, onBehavior: (SendBehavior) -> Unit, onFiles: () -> Unit, onImages: () -> Unit, onVoice: () -> Unit = {}, onForge: () -> Unit = {}, displayMode: ConversationDisplayMode = ConversationDisplayMode.CollapseTurns, onDisplayMode: (ConversationDisplayMode) -> Unit = {}) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Plus, "添加附件和发送选项", Modifier.size(18.dp)) }
@@ -42,7 +42,16 @@ fun ChatComposerMenu(behavior: SendBehavior, onBehavior: (SendBehavior) -> Unit,
             DropdownMenuItem(text = { Text("添加文件") }, leadingIcon = { PaseoGlyph(PaseoIcons.Paperclip) }, onClick = { open = false; onFiles() })
             DropdownMenuItem(text = { Text("Issue / Pull Request") }, leadingIcon = { PaseoGlyph(PaseoIcons.Link) }, onClick = { open = false; onForge() })
             DropdownMenuItem(text = { Text("语音对话") }, leadingIcon = { PaseoGlyph(PaseoIcons.MicVocal) }, onClick = { open = false; onVoice() })
-            DropdownMenuItem(text = { Text("折叠已完成的对话过程") }, trailingIcon = { if (collapse) PaseoGlyph(PaseoIcons.Check) }, onClick = { open = false; onCollapse() })
+            Text("聊天显示", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelSmall, color = LocalPaseoPalette.current.foregroundMuted)
+            ConversationDisplayMode.entries.forEach { choice ->
+                val label = when (choice) {
+                    ConversationDisplayMode.Full -> "完整显示"
+                    ConversationDisplayMode.CollapseToolCalls -> "折叠工具调用"
+                    ConversationDisplayMode.CollapseTurns -> "折叠已完成的对话过程"
+                }
+                DropdownMenuItem(text = { Text(label) }, trailingIcon = { if (displayMode == choice) PaseoGlyph(PaseoIcons.Check) },
+                    onClick = { onDisplayMode(choice); open = false })
+            }
             HorizontalDivider()
             Text("运行中发送消息", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelSmall, color = LocalPaseoPalette.current.foregroundMuted)
             SendBehavior.entries.forEach { choice -> DropdownMenuItem(text = { Text(choice.label) },

@@ -16,6 +16,47 @@ class ToolPresentationTest {
         assertEquals(rows.size, groupToolRows(rows, false).size)
         assertEquals(2, groupToolRows(listOf(tool("a"), tool("h").copy(title = "heartbeat"))).size)
     }
+    @Test fun completedTurnCollapseDoesNotAggregateItsIndividualToolRows() {
+        val rows = listOf(
+            TimelineRow("u", "user_message", turnId = "one"),
+            tool("a", turn = "one"),
+            tool("b", turn = "one"),
+            tool("c", turn = "one"),
+            TimelineRow("reply", "assistant_message", "Done", turnId = "one"),
+        )
+        val activeTurn = conversationPresentation(rows, running = true, expanded = emptySet(), collapse = true)
+        val activeEntries = groupToolRows(activeTurn, enabled = false)
+        assertEquals(rows.map { it.key }, activeEntries.map { it.key })
+        assertTrue(activeEntries.none { it.grouped })
+        val turnCollapsed = conversationPresentation(rows, running = false, expanded = emptySet(), collapse = true)
+        val collapsedEntries = groupToolRows(turnCollapsed, enabled = false)
+        assertEquals(listOf("u", "summary:u", "reply"), collapsedEntries.map { it.key })
+        val expandedTurn = conversationPresentation(rows, running = false, expanded = setOf("u"), collapse = true)
+        val expandedEntries = groupToolRows(expandedTurn, enabled = false)
+        assertEquals(listOf("u", "summary:u", "a", "b", "c", "reply"), expandedEntries.map { it.key })
+        assertTrue(expandedEntries.none { it.grouped })
+    }
+    @Test fun conversationDisplayModesAreIndependent() {
+        val rows = listOf(
+            TimelineRow("u", "user_message", turnId = "one"),
+            tool("a", turn = "one"),
+            tool("b", turn = "one"),
+            TimelineRow("reply", "assistant_message", "Done", turnId = "one"),
+        )
+        val full = groupToolRows(
+            conversationPresentation(rows, running = false, expanded = emptySet(), collapse = false),
+            enabled = false,
+        )
+        assertEquals(rows.map { it.key }, full.map { it.key })
+        assertTrue(full.none { it.grouped })
+
+        val callsCollapsed = groupToolRows(
+            conversationPresentation(rows, running = false, expanded = emptySet(), collapse = false),
+            enabled = true,
+        )
+        assertEquals(listOf("u", "a", "reply"), callsCollapsed.map { it.key })
+        assertEquals(listOf("a", "b"), callsCollapsed[1].calls.map { it.key })
+    }
     @Test fun expandedTurnsRevealIndividualCallsWithoutRegrouping() {
         val rows = listOf(TimelineRow("u", "user_message", turnId = "one"), tool("a"), tool("b"), TimelineRow("reply", "assistant_message", "Done", turnId = "one"))
         val nested = expandedTurnWorkKeys(rows, setOf("u"))

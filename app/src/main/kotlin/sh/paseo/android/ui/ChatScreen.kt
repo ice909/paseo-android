@@ -57,7 +57,7 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
     val session = sessions[key] ?: ConversationState()
     var cursor by remember { mutableIntStateOf(session.draft.text.length) }
     var cursorRequest by remember { mutableStateOf<Pair<String, Int>?>(null) }
-    val collapse by vm.collapseTurns.collectAsStateWithLifecycle()
+    val displayMode by vm.conversationDisplayMode.collectAsStateWithLifecycle()
     var expandedTurns by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var forgePicker by rememberSaveable { mutableStateOf(false) }
     val behavior by vm.sendBehavior.collectAsStateWithLifecycle()
@@ -122,9 +122,13 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
     val rows = state.timeline + pending.map { message -> TimelineRow("local:${message.id}", "user_message", message.draft.text,
         status = message.delivery, messageId = message.id, turnId = message.turnId) }
     val turnActive = agent.activeTurn != null || agent.status == "running" || session.sending
-    val nestedKeys = remember(rows, expandedTurns, collapse) { if (collapse) expandedTurnWorkKeys(rows, expandedTurns.toSet()) else emptySet() }
-    val presented = remember(rows, turnActive, expandedTurns, collapse) {
-        groupToolRows(conversationPresentation(rows.filter(::visibleToolRow), turnActive, expandedTurns.toSet(), collapse), enabled = collapse, ungroupedKeys = nestedKeys)
+    val nestedKeys = remember(rows, expandedTurns, displayMode) {
+        if (displayMode == ConversationDisplayMode.CollapseTurns) expandedTurnWorkKeys(rows, expandedTurns.toSet()) else emptySet()
+    }
+    val presented = remember(rows, turnActive, expandedTurns, displayMode) {
+        groupToolRows(conversationPresentation(rows.filter(::visibleToolRow), turnActive, expandedTurns.toSet(),
+            collapse = displayMode == ConversationDisplayMode.CollapseTurns),
+            enabled = displayMode == ConversationDisplayMode.CollapseToolCalls, ungroupedKeys = nestedKeys)
     }
     val footers = remember(rows, turnActive) { completedAssistantFooters(rows.filter(::visibleToolRow), turnActive) }
     val last = rows.lastOrNull()
@@ -225,7 +229,8 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
             onReceiveFiles = { vm.attachFiles(key, it) }, readSentMessages = { rows.asReversed().filter { it.type == "user_message" && it.text.isNotBlank() }.map { it.text } }, cursorRequest = cursorRequest, onSelection = { cursor = it },
             trailingControls = { IconButton(onClick = { if (audio.mode == "voice") vm.audio.mute() else if (!audio.active) startAudio(false) }, enabled = state.connected && !importing && audio.mode != "dictation", modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Mic, if (audio.mode == "voice") "切换麦克风静音" else "语音输入", Modifier.size(18.dp), if (audio.active) LocalPaseoPalette.current.accent else LocalPaseoPalette.current.foregroundMuted) } },
             attachments = { ChatAttachmentTray(session.draft.attachments) { vm.conversations.removeAttachment(key, it) } }, scrollOptions = false, options = {
-                ChatComposerMenu(behavior, vm::setSendBehavior, { picker.launch(arrayOf("*/*")) }, { picker.launch(arrayOf("image/*")) }, { startAudio(true) }, { forgePicker = true }, collapse, { vm.setCollapseTurns(!collapse) })
+                ChatComposerMenu(behavior, vm::setSendBehavior, { picker.launch(arrayOf("*/*")) }, { picker.launch(arrayOf("image/*")) }, { startAudio(true) }, { forgePicker = true },
+                    displayMode, vm::setConversationDisplayMode)
                 CompactAgentControls(agent, models, enabled = state.connected && !setting,
                     loading = loadingModels, modelError = modelError, actionError = controlError, onRetry = { modelRetry++ }, modifier = Modifier.weight(1f),
                     onModel = { model -> updateControl { vm.repository.setModel(agent.id, model) } },

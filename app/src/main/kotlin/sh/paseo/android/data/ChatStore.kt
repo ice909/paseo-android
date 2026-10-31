@@ -31,9 +31,13 @@ class ChatStore(context: Context) {
     var modEnter: Boolean
         get() = preferences.getBoolean("modEnter", false)
         set(value) { preferences.edit().putBoolean("modEnter", value).apply() }
-    var collapseTurns: Boolean
-        get() = preferences.getBoolean("collapseTurns", true)
-        set(value) { preferences.edit().putBoolean("collapseTurns", value).apply() }
+    var conversationDisplayMode: ConversationDisplayMode
+        get() = preferences.getString("conversationDisplayMode", null)?.let {
+            runCatching { ConversationDisplayMode.valueOf(it) }.getOrNull()
+        } ?: ConversationDisplayMode.CollapseTurns
+        set(value) {
+            preferences.edit().putString("conversationDisplayMode", value.name).apply()
+        }
     private fun key(): SecretKey {
         val alias = "paseo-native-drafts"
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
