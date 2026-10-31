@@ -31,17 +31,21 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         try { handle(message); _events.emit(message) } catch (error: Exception) { report(error) }
     } } }
 
-    fun connect(host: Host) {
+    @Synchronized
+    fun connect(host: Host, restore: WorkspaceSelection? = null) {
         connectionJob?.cancel()
         socket.disconnect()
         timelineJob?.cancel()
         publishJob?.cancel()
+        val previous = state.value
+        val selection = restore?.takeIf { it.hostId == host.id }
+            ?: previous.workspaceSelection()?.takeIf { it.hostId == host.id }
+            ?: previous.restoringWorkspace?.takeIf { it.hostId == host.id }
+        _state.value = PaseoState(host = host, restoringWorkspace = selection,
+            selectedAgentId = previous.selectedAgentId.takeIf { selection == null && previous.host?.id == host.id },
+            connection = ConnectionStatus.Connecting)
         connectionJob = scope.launch {
-            val sameHost = state.value.host?.id == host.id
-            val selected = state.value.selectedAgentId.takeIf { sameHost }
-            val workspace = state.value.selectedWorkspaceId.takeIf { sameHost }
             buffer.clear()
-            _state.value = PaseoState(host = host, selectedAgentId = selected, selectedWorkspaceId = workspace, connection = ConnectionStatus.Connecting)
             var attempt = 0
             while (isActive) {
                 try {
@@ -63,7 +67,8 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                             _state.update { it.copy(providers = providers) }
                         }
                     }
-                    state.value.selectedAgentId?.let { selectAgent(it) }
+                    if (state.value.restoringWorkspace != null) restoreWorkspace()
+                    else state.value.selectedAgentId?.let { selectAgent(it) }
                     attempt = 0
                     socket.connected.first { !it }
                 } catch (cancelled: CancellationException) {
@@ -84,7 +89,9 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         }
     }
 
+    @Synchronized
     fun disconnect() {
+        cancelWorkspaceRestore()
         connectionJob?.cancel()
         timelineJob?.cancel()
         publishJob?.cancel()
@@ -92,6 +99,28 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         _state.update { it.copy(connection = ConnectionStatus.Disconnected, loadingTimeline = false, busy = false) }
     }
     fun clearError() { _state.update { it.copy(error = null) } }
+
+    @Synchronized
+    fun cancelWorkspaceRestore() { _state.update { it.copy(restoringWorkspace = null) } }
+
+    private suspend fun restoreWorkspace() {
+        val selection = state.value.restoringWorkspace ?: return
+        fun pending() = state.value.host?.id == selection.hostId && state.value.restoringWorkspace == selection
+        // A missing first-page entry is not a deleted workspace. Load only as far as needed.
+        val visited = mutableSetOf<String>()
+        while (pending() && state.value.workspaces.none { it.id == selection.workspaceId }) {
+            val cursor = state.value.nextWorkspaceCursor ?: break
+            check(visited.add(cursor)) { "工作区分页未前进，请重新连接主机" }
+            fetchWorkspaces(cursor = cursor)
+        }
+        // Commit together with the pending check so a manual selection always wins.
+        synchronized(this) {
+            if (!pending()) return
+            val workspace = state.value.workspaces.find { it.id == selection.workspaceId }
+            if (workspace == null) cancelWorkspaceRestore()
+            else openWorkspace(workspace, selection.agentId)
+        }
+    }
 
     suspend fun refreshAgents(loadMore: Boolean = false) = withContext(dispatcher) {
         fetchAgents(cursor = if (loadMore) state.value.nextAgentCursor else null)
@@ -126,10 +155,11 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             emptyProjects = if (cursor == null) result.array("emptyProjects").map { wireJson.decodeFromJsonElement<Project>(it) } else current.emptyProjects,
             nextWorkspaceCursor = result.obj("pageInfo").string("nextCursor").ifBlank { null }, catalogLoaded = true) }
     }
-    fun openWorkspace(workspace: Workspace) {
-        _state.update { it.copy(selectedWorkspaceId = workspace.id) }
-        val agent = state.value.agents.firstOrNull { workspace.contains(it) }
-        if (agent != null) selectAgent(agent.id) else leaveAgent()
+    @Synchronized
+    fun openWorkspace(workspace: Workspace, preferredAgentId: String? = null) {
+        val agents = state.value.agents.filter(workspace::contains)
+        val agent = agents.find { it.id == preferredAgentId } ?: agents.firstOrNull()
+        if (agent != null) selectAgentInWorkspace(agent.id, workspace.id) else clearSelectedAgent(workspace.id)
     }
     private fun upsertWorkspace(workspace: Workspace) {
         _state.update { it.copy(workspaces = (it.workspaces.filterNot { w -> w.id == workspace.id } + workspace)
@@ -149,33 +179,53 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             selectedWorkspaceId = it.selectedWorkspaceId.takeUnless { selected -> selected == id }) }
     }
 
+    @Synchronized
     fun selectAgent(agentId: String) {
+        val current = state.value
+        val agent = current.agents.find { it.id == agentId }
+        val workspace = agent?.let { selected ->
+            current.selectedWorkspace?.takeIf { it.contains(selected) }
+                ?: current.workspaces.find { it.contains(selected) }
+        }
+        selectAgentInWorkspace(agentId, workspace?.id ?: current.selectedWorkspaceId)
+    }
+    private fun selectAgentInWorkspace(agentId: String, workspaceId: String?) {
         timelineJob?.cancel()
+        publishJob?.cancel()
+        val hostId = state.value.host?.id
+        val changed = state.value.selectedAgentId != agentId
+        // Publish the workspace and agent together, before Compose or persistence can observe them.
+        _state.update { it.copy(selectedWorkspaceId = workspaceId, selectedAgentId = agentId,
+            restoringWorkspace = null, timeline = if (changed) emptyList() else it.timeline, loadingTimeline = true, hasOlder = false) }
         timelineJob = scope.launch {
-            val changed = state.value.selectedAgentId != agentId
             if (changed) buffer.clear()
-            _state.update { it.copy(selectedAgentId = agentId, timeline = if (changed) emptyList() else it.timeline, loadingTimeline = true, hasOlder = false) }
             try {
                 releaseTimeline()
                 val subscription = socket.request("agent.timeline.set_subscription.request", "agentIds" to listOf(agentId))
                 timelineSubscription = subscription.string("subscriptionId").ifBlank { null }
                 val payload = socket.request("fetch_agent_timeline_request", "agentId" to agentId,
                     "direction" to "tail", "limit" to 200, "projection" to "canonical")
-                if (state.value.selectedAgentId == agentId) {
+                if (state.value.host?.id == hostId && state.value.selectedAgentId == agentId) {
                     buffer.hydrate(payload)
                     payload["agent"]?.takeIf { it is JsonObject }?.let { upsert(wireJson.decodeFromJsonElement<Agent>(it)) }
                     publishTimeline()
                 }
             } catch (error: Exception) { report(error) }
             finally {
-                if (state.value.selectedAgentId == agentId) _state.update { it.copy(loadingTimeline = false) }
+                if (isActive && state.value.host?.id == hostId && state.value.selectedAgentId == agentId) _state.update { it.copy(loadingTimeline = false) }
             }
         }
     }
+    @Synchronized
     fun leaveAgent() {
+        clearSelectedAgent(state.value.selectedWorkspaceId)
+    }
+    private fun clearSelectedAgent(workspaceId: String?) {
         timelineJob?.cancel()
-        scope.launch {
-            _state.update { it.copy(selectedAgentId = null, timeline = emptyList(), hasOlder = false) }
+        publishJob?.cancel()
+        _state.update { it.copy(selectedWorkspaceId = workspaceId, selectedAgentId = null,
+            restoringWorkspace = null, timeline = emptyList(), hasOlder = false, loadingTimeline = false) }
+        timelineJob = scope.launch {
             buffer.clear()
             try { releaseTimeline() } catch (_: Exception) { /* Connection cleanup also releases it. */ }
         }

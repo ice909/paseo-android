@@ -55,7 +55,7 @@ fun PaseoApp(vm: AppViewModel) {
     val welcome = screen == "hosts" && hosts.isEmpty()
     fun openAppearance() {
         appearanceReturnScreen = screen
-        vm.screen.value = "appearance"
+        vm.navigate("appearance")
         scope.launch { drawer.close() }
     }
     fun openPairing(direct: Boolean = false) {
@@ -78,19 +78,19 @@ fun PaseoApp(vm: AppViewModel) {
     val workspace = state.selectedWorkspace
     fun navigate(destination: String) {
         scope.launch { drawer.close() }
-        vm.screen.value = destination
+        vm.navigate(destination)
         explorer = false; createAgent = false
     }
-    LaunchedEffect(state.selectedWorkspaceId, state.workspaceAgents.map { it.id }, state.selectedAgentId, terminal, createAgent) {
-        if (screen == "chat" && !terminal && !createAgent && state.selectedAgentId == null) state.workspaceAgents.firstOrNull()?.let(vm::openAgent)
+    LaunchedEffect(screen, state.restoringWorkspace, state.selectedWorkspaceId, state.workspaceAgents.map { it.id }, state.selectedAgentId, terminal, createAgent) {
+        if (screen == "chat" && state.restoringWorkspace == null && !terminal && !createAgent && state.selectedAgentId == null) state.workspaceAgents.firstOrNull()?.let(vm::openAgent)
     }
     LaunchedEffect(vm) { vm.notices.collect { snackbar.showSnackbar(it) } }
     LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); vm.repository.clearError() } }
     BackHandler(drawer.isOpen || screen == "scan" || screen == "appearance" || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
         when {
             drawer.isOpen -> scope.launch { drawer.close() }
-            screen == "scan" -> { vm.cancelPairing(); vm.screen.value = "hosts" }
-            screen == "appearance" -> vm.screen.value = appearanceReturnScreen
+            screen == "scan" -> { vm.cancelPairing(); vm.navigate("hosts") }
+            screen == "appearance" -> vm.navigate(appearanceReturnScreen)
             explorer -> explorer = false
             createAgent -> createAgent = false
             else -> { vm.backToSessions(); terminal = false }
@@ -114,7 +114,7 @@ fun PaseoApp(vm: AppViewModel) {
             if (!welcome && screen != "scan") {
                 Column(Modifier.statusBarsPadding().padding(top = if (compactWorkspace) 8.dp else 0.dp)) {
                     Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = if (compactWorkspace) 12.dp else 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compactWorkspace) 8.dp else 0.dp)) {
-                        if (screen == "appearance") IconButton(onClick = { vm.screen.value = appearanceReturnScreen }) { PaseoGlyph(R.drawable.lucide_arrow_left, "返回", Modifier.size(18.dp), LocalPaseoPalette.current.foregroundMuted) }
+                        if (screen == "appearance") IconButton(onClick = { vm.navigate(appearanceReturnScreen) }) { PaseoGlyph(R.drawable.lucide_arrow_left, "返回", Modifier.size(18.dp), LocalPaseoPalette.current.foregroundMuted) }
                         else IconButton(onClick = { scope.launch { drawer.open() } }, modifier = if (compactWorkspace) Modifier.size(32.dp) else Modifier) { PaseoGlyph(PaseoIcons.MobileMenu, "打开侧栏", Modifier.size(16.dp, 12.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
                         run {
                             Column(Modifier.weight(1f).padding(start = 2.dp)) {
@@ -165,10 +165,12 @@ fun PaseoApp(vm: AppViewModel) {
             Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 contentState.SaveableStateProvider(screen) { when {
                     screen == "appearance" -> AppearanceSettingsScreen(theme, vm::setTheme)
-                    screen == "scan" -> PairScanScreen(vm) { vm.cancelPairing(); vm.screen.value = "hosts" }
+                    screen == "scan" -> PairScanScreen(vm) { vm.cancelPairing(); vm.navigate("hosts") }
                     !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    screen == "chat" && state.restoringWorkspace != null -> RestoringWorkspace(state,
+                        onBack = vm::backToSessions, onHosts = { navigate("hosts") }, onRetry = { state.host?.let(vm::connect) })
                     welcome -> WelcomeScreen(
-                        onScan = { vm.screen.value = "scan" },
+                        onScan = { vm.navigate("scan") },
                         onDirect = { openPairing(direct = true); showHostEditor = true },
                         onPasteLink = { openPairing(); showHostEditor = true },
                         onSettings = ::openAppearance)
@@ -227,10 +229,29 @@ fun PaseoApp(vm: AppViewModel) {
     if (archive.isNotEmpty()) AlertDialog(onDismissRequest = { archive = "" }, title = { Text(if (archive == "workspace") "归档工作区？" else "归档会话？") },
         text = { Text("将从活动列表移除，历史记录保留在主机上。") },
         confirmButton = { TextButton(enabled = state.connected, onClick = { vm.action {
-            if (archive == "workspace") { workspace?.let { vm.repository.archiveWorkspace(it.id) }; vm.screen.value = "sessions" }
+            if (archive == "workspace") { workspace?.let { vm.repository.archiveWorkspace(it.id) }; vm.navigate("sessions") }
             else state.selectedAgentId?.let { vm.repository.archiveAgent(it) }
             archive = ""
         } }) { Text("归档") } }, dismissButton = { TextButton(onClick = { archive = "" }) { Text("取消") } })
+}
+
+@Composable
+private fun RestoringWorkspace(state: PaseoState, onBack: () -> Unit, onHosts: () -> Unit, onRetry: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) {
+        if (state.connection != ConnectionStatus.Disconnected) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+        Text("正在恢复上次会话", style = MaterialTheme.typography.titleMedium)
+        Text(when (state.connection) {
+            ConnectionStatus.Connected -> "正在读取 ${state.host?.displayName.orEmpty()} 的工作区和会话…"
+            ConnectionStatus.Disconnected -> "主机未连接。连接后将继续恢复，你也可以选择其他主机。"
+            else -> "正在连接 ${state.host?.displayName.orEmpty()}，连接成功后将继续恢复。"
+        }, color = LocalPaseoPalette.current.foregroundMuted)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onBack) { Text("返回工作区") }
+            TextButton(onClick = onHosts) { Text("管理主机") }
+            if (state.connection == ConnectionStatus.Disconnected) TextButton(onClick = onRetry) { Text("重试") }
+        }
+    }
 }
 
 @Composable

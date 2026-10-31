@@ -15,6 +15,7 @@ import sh.paseo.android.data.ChatStore
 import sh.paseo.android.data.ChatAttachments
 import sh.paseo.android.data.HostStore
 import sh.paseo.android.data.LocalNetworkAccess
+import sh.paseo.android.data.WorkspaceSelectionStore
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     val repository = PaseoRepository()
@@ -26,14 +27,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         action { appearance.persist() }
     }
     private val store = HostStore(application)
+    private val workspaceSelectionStore = WorkspaceSelectionStore(application)
     private val storageMutex = Mutex()
     val hosts = MutableStateFlow<List<Host>>(emptyList())
-    val screen = MutableStateFlow("hosts")
+    private val _screen = MutableStateFlow("hosts")
+    val screen = _screen.asStateFlow()
     val initialized = MutableStateFlow(false)
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val creating = MutableStateFlow(false)
     val localNetworkPermissionRequest = MutableStateFlow<Host?>(null)
     private var connectionRequestJob: Job? = null
+    private var navigationRevision = 0L
     private var networkPermissionResult: CompletableDeferred<Boolean>? = null
     private var pairingJob: Job? = null
     private var pairingGeneration = 0
@@ -110,6 +114,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch { state.collect(conversations::update) }
         viewModelScope.launch {
+            combine(state, screen, initialized) { current, destination, ready -> Triple(current, destination, ready) }
+                .collect { (current, destination, ready) ->
+                    if (!ready || current.restoringWorkspace != null || hosts.value.none { it.id == current.host?.id }) return@collect
+                    val remembered = workspaceSelectionStore.selection
+                    // Offline/partial catalogs do not prove that the saved workspace was removed.
+                    if (current.connected && current.catalogLoaded && current.nextWorkspaceCursor == null &&
+                        remembered?.hostId == current.host?.id && current.workspaces.none { it.id == remembered?.workspaceId }) {
+                        workspaceSelectionStore.clear()
+                    }
+                    if (destination == "chat") {
+                        current.workspaceSelection()?.let(workspaceSelectionStore::remember)
+                        if (current.catalogLoaded && current.selectedWorkspaceId == null) _screen.value = "sessions"
+                    }
+                }
+        }
+        viewModelScope.launch {
             try { conversations.restoreMemory(chatStore.load()) }
             catch (error: Exception) { notices.emit("无法读取草稿：${error.message}") }
             conversations.sessions.map { sessions -> sessions.mapValues { ConversationMemory(it.value.draft, it.value.sentAttachments, it.value.optimistic, it.value.failed) } }.distinctUntilChanged().collectLatest { drafts ->
@@ -119,21 +139,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 catch (error: Exception) { notices.emit("草稿保存失败：${error.message}") }
             }
         }
+        val startupRevision = navigationRevision
         viewModelScope.launch {
             try {
                 val saved = store.load()
                 hosts.value = saved.hosts
-                saved.hosts.find { it.id == saved.lastHostId }?.let { connect(it) }
+                val remembered = workspaceSelectionStore.selection
+                if (remembered != null && saved.hosts.none { it.id == remembered.hostId }) workspaceSelectionStore.clear()
+                if (navigationRevision == startupRevision) {
+                    val hostId = workspaceSelectionStore.selection?.hostId ?: saved.lastHostId
+                    (saved.hosts.find { it.id == hostId } ?: saved.hosts.firstOrNull())?.let(::connect)
+                }
             } catch (error: Exception) { notices.emit("无法读取主机配置：${error.message}") }
             finally { initialized.value = true }
         }
     }
-    fun connect(host: Host) = connectTo(host, "sessions")
+    fun connect(host: Host) {
+        val restore = workspaceSelectionStore.selection?.takeIf { it.hostId == host.id }
+        connectTo(host, if (restore == null) "sessions" else "chat", restore)
+    }
     fun connectWorkspaceHost(host: Host) = connectTo(host, "new")
-    private fun connectTo(host: Host, destination: String) {
+    private fun cancelPendingNavigation() {
+        navigationRevision++
         connectionRequestJob?.cancel()
+        repository.cancelWorkspaceRestore()
+    }
+    fun navigate(destination: String) {
+        cancelPendingNavigation()
+        _screen.value = destination
+    }
+    private fun connectTo(host: Host, destination: String, restore: WorkspaceSelection? = null) {
+        cancelPendingNavigation()
+        val revision = navigationRevision
         connectionRequestJob = action {
-            if (networkAccess(host)) connectNow(host, destination)
+            if (networkAccess(host)) {
+                if (revision == navigationRevision && hosts.value.any { it.id == host.id }) connectNow(host, destination, restore)
+            }
             else notices.emit("连接局域网主机需要附近设备权限，请允许后重试。")
         }
     }
@@ -154,9 +195,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (resetPassword) pairingPasswordNeeded.value = false
     }
     fun cancelPairing() { pairingGeneration++; pairingJob?.cancel(); pairingJob = null; pairingBusy.value = false }
-    private fun connectNow(host: Host, destination: String = "sessions") {
-        repository.connect(host)
-        screen.value = destination
+    private fun connectNow(host: Host, destination: String, restore: WorkspaceSelection?) {
+        repository.connect(host, restore)
+        _screen.value = destination
         action { persist(host.id) }
     }
     fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit): Job {
@@ -202,13 +243,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteHost(host: Host) = action {
         val updated = hosts.value.filterNot { it.id == host.id }
         storageMutex.withLock { store.save(updated, state.value.host?.id?.takeUnless { it == host.id }); hosts.value = updated }
+        if (workspaceSelectionStore.selection?.hostId == host.id) workspaceSelectionStore.clear()
         conversations.forgetHost(host.id)
-        if (state.value.host?.id == host.id) { repository.disconnect(); screen.value = "hosts" }
+        if (state.value.host?.id == host.id) { navigate("hosts"); repository.disconnect() }
     }
     private suspend fun persist(id: String?) = storageMutex.withLock { store.save(hosts.value, id) }
-    fun openWorkspace(workspace: Workspace) { repository.openWorkspace(workspace); screen.value = "chat" }
-    fun openAgent(agent: Agent) { repository.selectAgent(agent.id); screen.value = "chat" }
-    fun backToSessions() { repository.leaveAgent(); screen.value = "sessions" }
+    fun openWorkspace(workspace: Workspace) {
+        cancelPendingNavigation()
+        repository.openWorkspace(workspace)
+        _screen.value = "chat"
+        state.value.workspaceSelection()?.let(workspaceSelectionStore::remember)
+    }
+    fun openAgent(agent: Agent) {
+        cancelPendingNavigation()
+        repository.selectAgent(agent.id)
+        _screen.value = "chat"
+        state.value.workspaceSelection()?.let(workspaceSelectionStore::remember)
+    }
+    fun backToSessions() { navigate("sessions"); repository.leaveAgent() }
     fun setDraft(id: String, text: String) { conversationKey(id)?.let { conversations.setDraft(it, text) } }
     fun send(alternate: Boolean = false) {
         val id = state.value.selectedAgentId ?: return
@@ -222,7 +274,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 if (workspace != null) repository.createAgent(workspace, provider, model, mode, prompt, title, key)
                 else repository.createWorkspace(provider, cwd.trim(), model, mode, prompt, title, key, projectId, worktree, branch)
-                screen.value = "chat"
+                _screen.value = "chat"
                 onCreated()
             } finally { creating.value = false }
         }
@@ -251,7 +303,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 conversations.setDraft(draftKey, "")
                 draft.attachments.forEach { conversations.removeAttachment(draftKey, it.id) }
-                screen.value = "chat"
+                _screen.value = "chat"
                 onCreated(terminal)
             } finally { creating.value = false }
         }

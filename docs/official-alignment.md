@@ -83,6 +83,12 @@
 
 对照 `composer/agent-controls/utils.ts`、`index.tsx` 和 `model-sheet.tsx`：手机 composer 用单个“模型＋思考强度”入口打开设置面板，面板包含模型、思考强度、权限模式以及主机声明的特性。模型解析保留别名、默认模型和运行时配置；未知模型不借用其他模型的推理能力，不支持思考强度时不显示该选项。更改使用对应 RPC，检查 `accepted` 回执，失败在面板内显示错误，最终值以主机快照为准。
 
+## 重启后恢复会话
+
+对照 `stores/last-workspace-selection.ts`、`stores/navigation-active-workspace-store/` 和 `navigation/host-runtime-bootstrap.ts`：本机记住最后访问的主机、工作区和会话 ID，重新启动后连接该主机，等待工作区与会话目录加载完成，再恢复原会话及其历史。进入设置或返回新建页不清除记录；恢复过程中手动导航优先。
+
+目录分页时继续查找目标工作区，主机离线或目录尚未返回时保留恢复记录。原会话已删除或归档则选择同一工作区的其他活动会话，空工作区保持为空；确认工作区已不存在或删除已保存主机后清除记录。恢复不会新建工作区、会话或发送消息。本次范围为工作区和会话选择，尚未持久化终端、文件面板等完整标签布局。
+
 ## 回复复制操作
 
 对照 `agent-stream/layout.ts`、`turn-footer.tsx`、`strategy.ts` 和 `components/message.tsx`：助手每轮仅在末尾显示一个复制入口，后续还有工具时放在工具之后；运行中的最新回合使用工作指示，历史已完成回合保留复制。复制范围按 canonical turn ID（旧历史退回触发消息边界）计算，包含折叠的助手 Markdown，以两个换行连接，不包含用户消息、工具输出或 reasoning。停止后使用已有回复恢复操作区，只有工具的回合显示时间而没有回复复制。

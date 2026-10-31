@@ -118,6 +118,7 @@ data class PaseoState(
     val emptyProjects: List<Project> = emptyList(),
     val nextWorkspaceCursor: String? = null,
     val selectedWorkspaceId: String? = null,
+    val restoringWorkspace: WorkspaceSelection? = null,
     val catalogLoaded: Boolean = false,
     val selectedAgentId: String? = null,
     val timeline: List<TimelineRow> = emptyList(),
