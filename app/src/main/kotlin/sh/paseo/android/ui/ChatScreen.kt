@@ -43,18 +43,33 @@ import sh.paseo.android.AppViewModel
 import sh.paseo.android.core.*
 
 @Composable
-fun ChatScreen(vm: AppViewModel, state: PaseoState, onCreateAgent: () -> Unit, topOverlayInset: Dp = 0.dp, expanded: Boolean = false, onFullscreenChange: (Boolean) -> Unit = {}) {
+fun ChatScreen(vm: AppViewModel, state: PaseoState, snackbarHostState: SnackbarHostState, onCreateAgent: () -> Unit, topOverlayInset: Dp = 0.dp, expanded: Boolean = false, onFullscreenChange: (Boolean) -> Unit = {}) {
     val agent = state.selectedAgent
     if (agent == null) Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         EmptyState(PaseoIcons.Sparkles, "工作区已就绪", "新建一个代理，开始处理任务。")
         Button(onClick = onCreateAgent, enabled = state.connected) { PaseoGlyph(PaseoIcons.Plus); Text("新建代理") }
-    } else state.host?.let { host -> key(host.id, agent.id) { Conversation(vm, state, agent, ConversationKey(host.id, agent.id), topOverlayInset, expanded, onFullscreenChange) } }
+    } else state.host?.let { host -> key(host.id, agent.id) { Conversation(vm, state, agent, ConversationKey(host.id, agent.id), snackbarHostState, topOverlayInset, expanded, onFullscreenChange) } }
 }
 
 @Composable
-private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key: ConversationKey, topOverlayInset: Dp, expanded: Boolean, onFullscreenChange: (Boolean) -> Unit) {
+private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key: ConversationKey, snackbarHostState: SnackbarHostState, topOverlayInset: Dp, expanded: Boolean, onFullscreenChange: (Boolean) -> Unit) {
     val sessions by vm.conversations.sessions.collectAsStateWithLifecycle()
     val session = sessions[key] ?: ConversationState()
+    var shownError by rememberSaveable(key.hostId, key.agentId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(session.error, session.failed?.id) {
+        val error = session.error ?: run { shownError = null; return@LaunchedEffect }
+        if (shownError == error) return@LaunchedEffect
+        shownError = error
+        val canRetry = session.failed != null
+        val result = snackbarHostState.showSnackbar(
+            message = error,
+            actionLabel = if (canRetry) "重试" else null,
+            withDismissAction = true,
+        )
+        if (result == SnackbarResult.ActionPerformed && canRetry) vm.conversations.retry(key)
+        else vm.conversations.dismissError(key)
+        shownError = null
+    }
     var cursor by remember { mutableIntStateOf(session.draft.text.length) }
     var cursorRequest by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val displayMode by vm.conversationDisplayMode.collectAsStateWithLifecycle()
@@ -181,7 +196,6 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
                 PaseoGlyph(PaseoIcons.ArrowDown, "最新消息")
             }
         }
-        if (agent.lastError != null && !agent.running && !expanded) Text(agent.lastError.orEmpty(), Modifier.padding(horizontal = 20.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         if (agent.pendingPermissions.isNotEmpty() && !expanded) Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
             agent.pendingPermissions.forEach { request -> key(request.id) { PermissionCard(vm, agent.id, request, state.connected) } }
         }
@@ -212,11 +226,6 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
                 }
             }
         }
-        session.error?.let { error -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-            if (session.failed != null) TextButton(onClick = { vm.conversations.retry(key) }, enabled = state.connected && !session.sending) { Text("重试") }
-            IconButton(onClick = { vm.conversations.dismissError(key) }, modifier = Modifier.size(28.dp)) { PaseoGlyph(PaseoIcons.X, "关闭发送错误", Modifier.size(14.dp)) }
-        } }
         if (forgePicker) ForgeAttachmentPicker(vm, agent, state.features.bool("forgeSearch"), { vm.conversations.attach(key, listOf(it)); forgePicker = false }) { forgePicker = false }
         if (audio.key == key) ConversationAudioPanel(vm, audio)
         ChatAutocomplete(vm, state, agent, session.draft.text, cursor, commands) { text, position -> cursorRequest = text to position; vm.conversations.setDraft(key, text) }

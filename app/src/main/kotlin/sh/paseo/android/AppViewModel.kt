@@ -222,6 +222,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val restore = workspaceSelectionStore.selection?.takeIf { it.hostId == host.id }
         connectTo(host, if (restore == null) "sessions" else "chat", restore)
     }
+    fun onAppForegrounded() {
+        val current = state.value
+        val host = current.host?.let { active -> hosts.value.find { it.id == active.id } ?: active } ?: return
+        if (current.connection != ConnectionStatus.Reconnecting) return
+        val restore = workspaceSelectionStore.selection?.takeIf { it.hostId == host.id }
+            ?: current.restoringWorkspace?.takeIf { it.hostId == host.id }
+        repository.connect(host, restore)
+    }
     fun connectWorkspaceHost(host: Host) = connectTo(host, "new")
     private fun cancelPendingNavigation() {
         navigationRevision++
