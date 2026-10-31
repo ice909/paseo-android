@@ -11,8 +11,8 @@ android {
         applicationId = "sh.paseo.android"
         minSdk = 26
         targetSdk = 37
-        versionCode = 10
-        versionName = "0.10.0"
+        versionCode = providers.gradleProperty("appVersionCode").orNull?.toIntOrNull() ?: 10
+        versionName = providers.gradleProperty("appVersionName").orNull ?: "0.10.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {

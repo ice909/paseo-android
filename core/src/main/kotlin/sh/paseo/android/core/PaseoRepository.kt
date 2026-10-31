@@ -83,7 +83,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                 socket.disconnect()
                 timelineJob?.cancel()
                 publishJob?.cancel()
-                _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = false) }
+                _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = false, error = null) }
                 delay(min(30_000L, 1_000L shl min(attempt++, 5)))
             }
         }

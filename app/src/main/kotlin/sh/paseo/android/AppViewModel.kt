@@ -3,6 +3,7 @@ package sh.paseo.android
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -16,6 +17,8 @@ import sh.paseo.android.data.ChatAttachments
 import sh.paseo.android.data.HostStore
 import sh.paseo.android.data.LocalNetworkAccess
 import sh.paseo.android.data.WorkspaceSelectionStore
+import sh.paseo.android.data.PreviewUpdateState
+import sh.paseo.android.data.PreviewUpdates
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     val repository = PaseoRepository()
@@ -45,6 +48,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val pairingError = MutableStateFlow<String?>(null)
     val pairingPasswordNeeded = MutableStateFlow(false)
     private val chatStore = ChatStore(application)
+    private val previewUpdates = PreviewUpdates(application)
+    val previewUpdateState = MutableStateFlow(PreviewUpdateState())
     val sendBehavior = MutableStateFlow(chatStore.behavior)
     val collapseTurns = MutableStateFlow(chatStore.collapseTurns)
     fun setCollapseTurns(value: Boolean) { collapseTurns.value = value; chatStore.collapseTurns = value }
@@ -152,6 +157,62 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (error: Exception) { notices.emit("无法读取主机配置：${error.message}") }
             finally { initialized.value = true }
+        }
+        checkForPreviewUpdate(manual = false)
+    }
+    fun checkForPreviewUpdate(manual: Boolean = true) {
+        val current = previewUpdateState.value
+        if (current.checking || current.downloading) return
+        if (!manual && System.currentTimeMillis() - getApplication<Application>()
+                .getSharedPreferences("preview_updates", 0).getLong("last_check", 0L) < 6 * 60 * 60 * 1000L) return
+        previewUpdateState.value = current.copy(checking = true, message = null)
+        viewModelScope.launch {
+            try {
+                val packageInfo = getApplication<Application>().packageManager.getPackageInfo(getApplication<Application>().packageName, 0)
+                val installedVersion = PackageInfoCompat.getLongVersionCode(packageInfo)
+                val update = previewUpdates.check(installedVersion)
+                val downloaded = current.downloadedApk?.takeIf { it.isFile && update?.versionCode == current.update?.versionCode }
+                previewUpdateState.value = PreviewUpdateState(checked = true, update = update, downloadedApk = downloaded,
+                    progress = if (downloaded != null) 1f else 0f,
+                    message = when {
+                        downloaded != null -> "下载完成，文件校验通过"
+                        manual && update == null -> "当前已是最新测试版"
+                        else -> null
+                    })
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                previewUpdateState.value = PreviewUpdateState(checked = true, message = error.message ?: "检查更新失败")
+            } finally {
+                getApplication<Application>().getSharedPreferences("preview_updates", 0).edit()
+                    .putLong("last_check", System.currentTimeMillis()).apply()
+            }
+        }
+    }
+    fun downloadPreviewUpdate() {
+        val update = previewUpdateState.value.update ?: return
+        if (previewUpdateState.value.downloading) return
+        previewUpdateState.value = previewUpdateState.value.copy(downloading = true, progress = 0f, message = null)
+        viewModelScope.launch {
+            try {
+                val file = previewUpdates.download(update) { progress ->
+                    previewUpdateState.value = previewUpdateState.value.copy(progress = progress)
+                }
+                previewUpdateState.value = previewUpdateState.value.copy(downloading = false, downloadedApk = file, progress = 1f, message = "下载完成，文件校验通过")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                previewUpdateState.value = previewUpdateState.value.copy(downloading = false, message = error.message ?: "下载更新失败")
+            }
+        }
+    }
+    fun installPreviewUpdate() {
+        try {
+            val apk = previewUpdateState.value.downloadedApk ?: error("请先下载更新")
+            val launched = previewUpdates.install(apk)
+            if (!launched) previewUpdateState.value = previewUpdateState.value.copy(message = "请允许 Paseo Native 安装未知应用，然后再次点击“安装更新”。")
+        } catch (error: Exception) {
+            previewUpdateState.value = previewUpdateState.value.copy(message = error.message ?: "无法启动安装程序")
         }
     }
     fun connect(host: Host) {

@@ -181,7 +181,7 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
         if (agent.pendingPermissions.isNotEmpty() && !expanded) Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
             agent.pendingPermissions.forEach { request -> key(request.id) { PermissionCard(vm, agent.id, request, state.connected) } }
         }
-        if (session.queue.isNotEmpty() && !expanded) Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (session.queue.isNotEmpty() && !expanded) Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             session.queue.forEach { message ->
                 Surface(shape = RoundedCornerShape(12.dp), color = LocalPaseoPalette.current.surface1,
                     border = BorderStroke(1.dp, LocalPaseoPalette.current.border)) {

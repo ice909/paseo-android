@@ -130,17 +130,18 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
                 Spacer(Modifier.width(4.dp))
                 val active = canSend && (!sending || stop) && !cancelling
                 val label = if (stop) "停止生成" else if (queue) "加入队列" else sendDescription
-                Box {
-                    Box(Modifier.size(28.dp).clip(CircleShape)
+                Box(
+                    Modifier.size(28.dp).clip(CircleShape)
                         .background(if (active) palette.accent else palette.surface2)
                         .combinedClickable(enabled = active, role = Role.Button,
                             onClick = { if (stop) onStop() else onSend() },
                             onLongClickLabel = if (running && !stop && onQueueSend != null) "选择发送方式" else null,
                             onLongClick = if (running && !stop && onQueueSend != null) ({ sendMenuOpen = true }) else null)
-                        .semantics { contentDescription = label; if (!active) disabled() }, contentAlignment = Alignment.Center) {
-                        if (sending && !stop || cancelling) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = palette.accentForeground)
-                        else PaseoGlyph(when { stop -> PaseoIcons.SquareFilled; returnIcon -> PaseoIcons.CornerDownLeft; else -> PaseoIcons.ArrowUp }, modifier = Modifier.size(if (stop) 14.dp else 20.dp), tint = if (active) palette.accentForeground else palette.foregroundExtraMuted)
-                    }
+                        .semantics { contentDescription = label; if (!active) disabled() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (sending && !stop || cancelling) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = palette.accentForeground)
+                    else PaseoGlyph(when { stop -> PaseoIcons.SquareFilled; returnIcon -> PaseoIcons.CornerDownLeft; else -> PaseoIcons.ArrowUp }, modifier = Modifier.size(if (stop) 14.dp else 20.dp), tint = if (active) palette.accentForeground else palette.foregroundExtraMuted)
                     PaseoDropdownMenu(sendMenuOpen, { sendMenuOpen = false }) {
                         DropdownMenuItem(text = { Text("按默认模式发送") }, onClick = { sendMenuOpen = false; onSend() })
                         DropdownMenuItem(text = { Text("排队发送") }, onClick = { sendMenuOpen = false; onQueueSend?.invoke() })

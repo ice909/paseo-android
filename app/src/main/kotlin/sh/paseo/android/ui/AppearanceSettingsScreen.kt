@@ -18,9 +18,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import sh.paseo.android.appearance.ThemePreference
+import sh.paseo.android.data.PreviewUpdateState
 
 @Composable
-fun AppearanceSettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Unit) {
+fun AppearanceSettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Unit,
+    update: PreviewUpdateState, onCheckUpdates: () -> Unit, onInstallUpdate: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Column(Modifier.widthIn(max = 820.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -53,6 +55,25 @@ fun AppearanceSettingsScreen(preference: ThemePreference, onTheme: (ThemePrefere
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("预览", style = MaterialTheme.typography.titleSmall)
                 AppearancePreview()
+            }
+            HorizontalDivider(color = LocalPaseoPalette.current.border)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("测试版更新", style = MaterialTheme.typography.titleSmall)
+                        Text(update.message ?: if (update.checking) "正在检查更新…" else "检查 GitHub 上的最新预发布版",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    OutlinedButton(onClick = onCheckUpdates, enabled = !update.checking && !update.downloading) {
+                        Text(if (update.checking) "检查中…" else "检查更新")
+                    }
+                }
+                if (update.downloading) LinearProgressIndicator(progress = { update.progress }, modifier = Modifier.fillMaxWidth())
+                if (update.downloadedApk != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("更新已下载并完成校验", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = LocalPaseoPalette.current.statusSuccess)
+                    Button(onClick = onInstallUpdate) { Text("安装更新") }
+                }
             }
         }
     }

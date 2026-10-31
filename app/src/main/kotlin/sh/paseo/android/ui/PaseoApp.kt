@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import sh.paseo.android.R
 import sh.paseo.android.AppViewModel
@@ -44,6 +45,8 @@ fun PaseoApp(vm: AppViewModel) {
     val screen by vm.screen.collectAsStateWithLifecycle()
     val hosts by vm.hosts.collectAsStateWithLifecycle()
     val initialized by vm.initialized.collectAsStateWithLifecycle()
+    val previewUpdate by vm.previewUpdateState.collectAsStateWithLifecycle()
+    var dismissedUpdateVersion by rememberSaveable { mutableStateOf(-1L) }
     val contentState = rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -86,7 +89,15 @@ fun PaseoApp(vm: AppViewModel) {
         if (screen == "chat" && state.restoringWorkspace == null && !terminal && !createAgent && state.selectedAgentId == null) state.workspaceAgents.firstOrNull()?.let(vm::openAgent)
     }
     LaunchedEffect(vm) { vm.notices.collect { snackbar.showSnackbar(it) } }
-    LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); vm.repository.clearError() } }
+    LaunchedEffect(state.error, state.connection) {
+        val error = state.error ?: return@LaunchedEffect
+        if (state.connection == ConnectionStatus.Reconnecting) return@LaunchedEffect
+        delay(300)
+        if (vm.state.value.error == error && vm.state.value.connection != ConnectionStatus.Reconnecting) {
+            snackbar.showSnackbar(error)
+            vm.repository.clearError()
+        }
+    }
     BackHandler(drawer.isOpen || screen == "scan" || screen == "appearance" || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
         when {
             drawer.isOpen -> scope.launch { drawer.close() }
@@ -183,7 +194,9 @@ fun PaseoApp(vm: AppViewModel) {
             topBar = { if (!floatingHeader) header() }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 contentState.SaveableStateProvider(screen) { when {
-                    screen == "appearance" -> AppearanceSettingsScreen(theme, vm::setTheme)
+                    screen == "appearance" -> AppearanceSettingsScreen(theme, vm::setTheme, previewUpdate,
+                        onCheckUpdates = { dismissedUpdateVersion = -1L; vm.checkForPreviewUpdate() },
+                        onInstallUpdate = vm::installPreviewUpdate)
                     screen == "scan" -> PairScanScreen(vm) { vm.cancelPairing(); vm.navigate("hosts") }
                     !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                     screen == "chat" && state.restoringWorkspace != null -> RestoringWorkspace(state,
@@ -241,6 +254,28 @@ fun PaseoApp(vm: AppViewModel) {
         if (editingHost != null) HostEditor(vm, editingHost) { showHostEditor = false }
         else PairingSheet(vm, direct = directPairing, onDismiss = { showHostEditor = false })
     }
+    val availableUpdate = previewUpdate.update
+    if (availableUpdate != null && dismissedUpdateVersion != availableUpdate.versionCode) AlertDialog(
+        onDismissRequest = { dismissedUpdateVersion = availableUpdate.versionCode },
+        title = { Text("发现测试版更新：${availableUpdate.versionName}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(availableUpdate.notes.ifBlank { "有新的 Paseo Android 测试版可供下载。" })
+                if (previewUpdate.downloading) LinearProgressIndicator(progress = { previewUpdate.progress }, modifier = Modifier.fillMaxWidth())
+                previewUpdate.message?.let { Text(it, color = if (previewUpdate.downloadedApk != null) LocalPaseoPalette.current.statusSuccess else MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !previewUpdate.checking && !previewUpdate.downloading, onClick = {
+                if (previewUpdate.downloadedApk == null) vm.downloadPreviewUpdate() else vm.installPreviewUpdate()
+            }) { Text(when {
+                previewUpdate.downloading -> "下载中…"
+                previewUpdate.downloadedApk != null -> "安装更新"
+                else -> "下载并校验"
+            }) }
+        },
+        dismissButton = { TextButton(onClick = { dismissedUpdateVersion = availableUpdate.versionCode }) { Text("稍后") } },
+    )
     if (rename.isNotEmpty()) TextEntryDialog(if (rename == "workspace") "重命名工作区" else "重命名会话",
         if (rename == "workspace") workspace?.name.orEmpty() else state.selectedAgent?.displayTitle.orEmpty(), "名称", { rename = "" }) { name ->
         vm.action { if (rename == "workspace") workspace?.let { vm.repository.renameWorkspace(it.id, name) } else state.selectedAgentId?.let { vm.repository.renameAgent(it, name) }; rename = "" }

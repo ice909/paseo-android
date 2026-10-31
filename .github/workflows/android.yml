@@ -2,9 +2,13 @@ name: Android
 on:
   push:
   pull_request:
+env:
+  PREVIEW_VERSION_BASE: '0.10.0'
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-java@v6.1.0
@@ -13,6 +17,14 @@ jobs:
           java-version: '27'
       - uses: android-actions/setup-android@v4.0.4
       - uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Set preview version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          version_code="$((100000 + GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))"
+          version_name="${PREVIEW_VERSION_BASE}-preview.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          echo "ORG_GRADLE_PROJECT_appVersionCode=$version_code" >> "$GITHUB_ENV"
+          echo "ORG_GRADLE_PROJECT_appVersionName=$version_name" >> "$GITHUB_ENV"
+          echo "ANDROID_PREVIEW_VERSION=$version_name" >> "$GITHUB_ENV"
       - run: |
           run_gradle() {
             ./gradlew --no-daemon --no-parallel --max-workers=1 \
@@ -44,10 +56,37 @@ jobs:
             --out app/build/outputs/apk/release/paseo-release.apk \
             app/build/outputs/apk/release/app-release-unsigned.apk
           "$signer" verify --verbose app/build/outputs/apk/release/paseo-release.apk
+          sha256sum app/build/outputs/apk/release/paseo-release.apk \
+            > app/build/outputs/apk/release/paseo-release.apk.sha256
       - uses: actions/upload-artifact@v7.0.2
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         with:
           name: paseo-native-release
-          path: app/build/outputs/apk/release/paseo-release.apk
+          path: |
+            app/build/outputs/apk/release/paseo-release.apk
+            app/build/outputs/apk/release/paseo-release.apk.sha256
           if-no-files-found: error
           retention-days: 5
+  publish-preview:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name paseo-native-release --dir release
+      - name: Publish preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="preview-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA::7}"
+          gh release create "$tag" release/paseo-release.apk release/paseo-release.apk.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Paseo Android ${PREVIEW_VERSION_BASE}-preview.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --notes "Automated testing build from commit ${GITHUB_SHA}." \
+            --prerelease \
+            --target "$GITHUB_SHA"
