@@ -31,6 +31,7 @@ class DaemonSocket(
     private val outbound = Any()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
+    private val pendingUpdates = ConcurrentHashMap<String, (JsonObject) -> Unit>()
     private val incoming = Channel<Pair<Long, JsonObject>>(Channel.UNLIMITED)
     val messages = incoming.receiveAsFlow().filter { it.first == generation.get() }.map { it.second }
     private val _connected = MutableStateFlow(false)
@@ -91,7 +92,10 @@ class DaemonSocket(
                         _connected.value = true; ready.complete(payload)
                     }
                     val requestId = payload.string("requestId")
-                    pending.remove(requestId)?.let { deferred ->
+                    if (message.string("type") == "usage.list_reports.update") {
+                        pendingUpdates[requestId]?.invoke(payload)
+                    } else pending.remove(requestId)?.let { deferred ->
+                        pendingUpdates.remove(requestId)
                         val error = payload["error"]
                         when {
                             message.string("type") == "rpc_error" -> deferred.completeExceptionally(IOException(payload.string("error")))
@@ -166,7 +170,7 @@ class DaemonSocket(
         catch (error: Exception) { disconnect(); throw error }
     }
 
-    suspend fun request(type: String, vararg fields: Pair<String, Any?>): JsonObject {
+    suspend fun request(type: String, vararg fields: Pair<String, Any?>, expectedGeneration: Long? = null, onUpdate: ((JsonObject) -> Unit)? = null): JsonObject {
         check(_connected.value) { "主机未连接" }
         val id = newId()
         val result = CompletableDeferred<JsonObject>()
@@ -174,8 +178,12 @@ class DaemonSocket(
         var deferredCleanup = false
         val createsSubscription = type == "agent.timeline.set_subscription.request" || fields.any { it.first == "subscribe" && it.second != null }
         pending[id] = result
+        if (onUpdate != null) pendingUpdates[id] = onUpdate
         try {
-            send(type, *fields, "requestId" to id)
+            synchronized(outbound) {
+                check(expectedGeneration == null || expectedGeneration == generation.get()) { "主机连接已改变" }
+                send(type, *fields, "requestId" to id)
+            }
             return withTimeout(30_000) { result.await() }
         } catch (cancelled: CancellationException) {
             if (createsSubscription) {
@@ -192,7 +200,7 @@ class DaemonSocket(
                 }
             }
             throw cancelled
-        } finally { if (!deferredCleanup) pending.remove(id) }
+        } finally { pendingUpdates.remove(id); if (!deferredCleanup) pending.remove(id) }
     }
 
     fun send(type: String, vararg fields: Pair<String, Any?>) = synchronized(outbound) {
@@ -272,6 +280,7 @@ class DaemonSocket(
         handshake?.completeExceptionally(error)
         pending.values.forEach { it.completeExceptionally(error) }
         pending.clear()
+        pendingUpdates.clear()
     }
     fun close() {
         disconnect(); cleanupScope.cancel(); incoming.close()

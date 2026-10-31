@@ -15,6 +15,7 @@ import threading
 import time
 import copy
 import uuid
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 NOW = "2026-10-29T00:00:00Z"
@@ -29,7 +30,15 @@ EMPTY_WORKSPACE = dict(WORKSPACE, id="fixture-empty", name="Empty workspace")
 HISTORY = [dict(type="user_message", text="Review the native Android client.", messageId="u1"),
            dict(type="assistant_message", text="## Native client review\n\nThe connection is working. This is a **local protocol fixture**.\n\n```kotlin\nLazyColumn {\n    items(messages, key = { it.id }) { Message(it) }\n}\n```\n\nSend a message to test streaming and tool approval.", messageId="a1")]
 ICON_GALLERY = False
+MARKDOWN_IMAGES = False
+TOOL_PRESENTATION = False
+IMAGE_BYTES = b''
 EVENTS_FILE = None
+AGENT_CONTROLS = False
+COPY_ACTIONS = False
+SIDEBAR = False
+LEGACY_USAGE = False
+USAGE_UNAVAILABLE = False
 FILES = {"README.md": "# Paseo Native\n\nA Kotlin and Jetpack Compose client.\n", "app/Main.kt": "fun main() {\n    println(\"Paseo\")\n}\n"}
 
 
@@ -37,6 +46,14 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
+        if MARKDOWN_IMAGES and self.path == '/fixture-image.png':
+            self.audit('image-http', sha256=hashlib.sha256(IMAGE_BYTES).hexdigest())
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/png')
+            self.send_header('Content-Length', str(len(IMAGE_BYTES)))
+            self.end_headers()
+            self.wfile.write(IMAGE_BYTES)
+            return
         if self.headers.get("Upgrade", "").lower() != "websocket":
             self.send_error(400, "WebSocket required")
             return
@@ -49,8 +66,29 @@ class Handler(BaseHTTPRequestHandler):
         self.lock = threading.Lock()
         self.agent = copy.deepcopy(AGENT)
         self.agents = [self.agent, dict(copy.deepcopy(AGENT), id="fixture-second", title="Second agent")]
+        if AGENT_CONTROLS:
+            self.agent["model"] = None
+            self.agent["availableModes"] = MODES
+            self.agents[1]["model"] = "legacy-config"
+            self.agents[1]["runtimeInfo"] = dict(model="sonnet-alias", thinkingOptionId="low")
         self.workspaces = [dict(WORKSPACE), dict(EMPTY_WORKSPACE)]
+        if SIDEBAR:
+            self.workspaces[0]["status"] = "running"
+            self.workspaces.extend([
+                dict(WORKSPACE, id="fixture-waiting", projectId="fixture-other", projectDisplayName="mimeta", name="Waiting for input", status="needs_input"),
+                dict(WORKSPACE, id="fixture-attention", projectId="fixture-other", projectDisplayName="mimeta", name="Ready for review", status="attention"),
+            ])
         self.histories = {a["id"]: copy.deepcopy(HISTORY) for a in self.agents}
+        if COPY_ACTIONS:
+            for history in self.histories.values():
+                history[:] = [dict(type='user_message', text='Copy fixture prompt', messageId='copy-user'),
+                    dict(type='assistant_message', text='First **answer**.', messageId='copy-first'),
+                    dict(type='tool_call', name='exec_command', callId='copy-tool', status='completed', detail=dict(type='shell', command='fixture-check', output='EXCLUDED TOOL OUTPUT')),
+                    dict(type='assistant_message', text='Final answer.', messageId='copy-final'),
+                    dict(type='tool_call', name='exec_command', callId='copy-tail', status='completed', detail=dict(type='shell', command='fixture-cleanup', output='EXCLUDED CLEANUP OUTPUT'))]
+        if AGENT_CONTROLS:
+            for history in self.histories.values():
+                history.extend(dict(type="assistant_message", text=f"Header scroll fixture {index}: the compact title stays above this scrolling conversation.") for index in range(20))
         self.history = self.histories[self.agent["id"]]
         self.terminal_exists = True
         self.receipts = set()
@@ -59,6 +97,10 @@ class Handler(BaseHTTPRequestHandler):
         self.voice_enabled = False
         self.voice_played = False
         self.dictations = {}
+        self.image_attempts = {}
+        self.timeline_turns = {}
+        if COPY_ACTIONS:
+            self.timeline_turns = {(agent["id"], index): "copy-history" for agent in self.agents for index in range(1, len(self.histories[agent["id"]]) + 1)}
         self.output = "$ pwd\n/home/dev/paseo\n$ "
         try:
             while True:
@@ -114,8 +156,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def item(self, item):
         self.history.append(item)
+        turn = 'fixture-turn'
+        if TOOL_PRESENTATION:
+            turn = ('turn-' + item['messageId']) if item['type'] == 'user_message' else (self.agent.get('activeTurn') or {}).get('turnId', '')
+            self.timeline_turns[(self.agent['id'], len(self.history))] = turn
         self.send("agent_stream", agentId=self.agent["id"], epoch="fixture-epoch", seq=len(self.history),
-                  timestamp=NOW, event=dict(type="timeline", provider="claude", turnId="fixture-turn", item=item))
+                  timestamp=NOW, event=dict(type="timeline", provider="claude", turnId=turn, item=item))
 
     def audit(self, kind, **data):
         if EVENTS_FILE:
@@ -143,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_frame(json.dumps(dict(type="hello.rejected", reason="incorrect_password", accepts=["password"])))
                 return
             self.send("status", status="server_info", serverId="fixture-server", hostname="Local test fixture",
-                      features=dict(ownedSubscriptions=True, selectiveAgentTimeline=True, creationLifecycle=True, rewind=True), capabilities=dict(voice=dict(dictation=dict(enabled=True, reason="ready"), voice=dict(enabled=True, reason="ready"))))
+                      features=dict(ownedSubscriptions=True, selectiveAgentTimeline=True, creationLifecycle=True, rewind=True, projectList=SIDEBAR, usageSources=SIDEBAR and not LEGACY_USAGE, providerUsageList=SIDEBAR and LEGACY_USAGE), capabilities=dict(voice=dict(dictation=dict(enabled=True, reason="ready"), voice=dict(enabled=True, reason="ready"))))
             return
         message = frame.get("message", {})
         kind = message.get("type", "")
@@ -157,10 +203,34 @@ class Handler(BaseHTTPRequestHandler):
         elif kind == "fetch_workspaces_request":
             self.send("fetch_workspaces_response", requestId=req, subscriptionId="fixture-workspaces", entries=self.workspaces,
                       emptyProjects=[dict(projectId="empty-project", projectDisplayName="Empty project", projectRootPath="/home/dev/empty", projectKind="directory")], pageInfo=dict(nextCursor=None, hasMore=False))
+        elif kind == "project.list.request":
+            self.send("project.list.response", requestId=req, projects=[dict(projectId=w["projectId"], projectKey="fixture:" + w["projectId"], projectDisplayName=w["projectDisplayName"], projectRootPath=w["projectRootPath"]) for w in self.workspaces])
+        elif kind in ("usage.list_reports.request", "provider.usage.list.request"):
+            windows = [dict(id="session", label="Session", shortLabel="5h", usedPct=12, remainingPct=88, summary=False, resetsAt="2026-11-01T12:00:00Z"),
+                       dict(id="weekly", label="Weekly", shortLabel="wk", usedPct=76, remainingPct=24, summary=True, resetsAt="2026-11-06T12:00:00Z")]
+            report = dict(status="available", planLabel="Plus", windows=windows)
+            if USAGE_UNAVAILABLE:
+                report = dict(status="unavailable", problem=dict(kind="not_authenticated", detail="Codex account is not signed in"))
+            if kind == "provider.usage.list.request":
+                self.send("provider.usage.list.response", requestId=req, fetchedAt=NOW, providers=[dict(providerId="codex", displayName="Codex", fetchedAt=NOW, **report)])
+            else:
+                self.send("usage.list_reports.update", requestId=req, report=dict(id="codex:personal", sourceId="codex", sourceLabel="Codex", icon="<svg viewBox=\"0 0 24 24\"></svg>", account=dict(label="Personal"), fetchedAt=NOW, report=report))
+                self.send("usage.list_reports.response", requestId=req, error=None)
+        elif kind == "fetch_agent_history_request":
+            query = message.get("search", "").lower()
+            entries = self.agents + [dict(AGENT, id="fixture-archived", title="Archived review", archivedAt=NOW)]
+            entries = [a for a in entries if query in a["title"].lower()]
+            self.send("fetch_agent_history_response", requestId=req, entries=[dict(agent=a, project={}) for a in entries], pageInfo=dict(nextCursor=None, hasMore=False))
         elif kind == "list_available_providers_request":
             self.send("list_available_providers_response", requestId=req, providers=[dict(provider="claude", available=True)])
         elif kind == "list_provider_models_request":
-            self.send("list_provider_models_response", requestId=req, models=[dict(id="claude-sonnet-4-6", label="Sonnet (fixture)", thinkingOptions=[dict(id="low", label="Low"), dict(id="high", label="High")]), dict(id="claude-opus-4-6", label="Opus (fixture)")])
+            models = [dict(id="claude-sonnet-4-6", label="Sonnet (fixture)", thinkingOptions=[dict(id="low", label="Low"), dict(id="high", label="High")]), dict(id="claude-opus-4-6", label="Opus (fixture)")]
+            if AGENT_CONTROLS:
+                models[0].update(aliases=["sonnet-alias"], isDefault=True)
+                models[0]["thinkingOptions"][1]["isDefault"] = True
+                models[0]["thinkingOptions"].append(dict(id="reject", label="Rejected (fixture)", description="Simulated server rejection"))
+                models.reverse()
+            self.send("list_provider_models_response", requestId=req, models=models)
         elif kind == "list_provider_modes_request":
             self.send("list_provider_modes_response", requestId=req, modes=MODES)
         elif kind == "list_commands_request":
@@ -172,18 +242,28 @@ class Handler(BaseHTTPRequestHandler):
             self.send("directory_suggestions_response", requestId=req, entries=[dict(path=path, kind="file") for path in FILES if message.get("includeFiles") and message.get("query", "").lower() in path.lower()][:8], directories=[])
         elif kind == "set_agent_thinking_request":
             agent = next(a for a in self.agents if a["id"] == message["agentId"])
+            if AGENT_CONTROLS and message["thinkingOptionId"] == "reject":
+                self.send("set_agent_thinking_response", requestId=req, accepted=False, error="Unsupported effort (fixture)")
+                return
+            if agent.get("runtimeInfo"):
+                agent["runtimeInfo"]["thinkingOptionId"] = message["thinkingOptionId"]
             agent["thinkingOptionId"] = message["thinkingOptionId"]
             self.send("set_agent_thinking_response", requestId=req, accepted=True, error=None)
             self.send("agent_status", agentId=agent["id"], info=agent)
         elif kind in ("set_agent_model_request", "set_agent_mode_request"):
             agent = next(a for a in self.agents if a["id"] == message["agentId"])
             agent["model" if kind == "set_agent_model_request" else "currentModeId"] = message.get("modelId", message.get("modeId"))
+            if AGENT_CONTROLS and kind == "set_agent_model_request":
+                agent.pop("runtimeInfo", None)
+                agent["thinkingOptionId"] = None
             self.send(kind.replace("request", "response"), requestId=req, accepted=True, error=None)
             self.send("agent_status", agentId=agent["id"], info=agent)
         elif kind == "agent.timeline.set_subscription.request":
             self.send("agent.timeline.set_subscription.response", requestId=req, subscriptionId="fixture-timeline", agentIds=message["agentIds"])
         elif kind == "subscription.release.request":
             self.send("subscription.release.response", requestId=req, subscriptionId=message["subscriptionId"])
+        elif kind == "fetch_agent_timeline_request" and message["agentId"] == "fixture-archived":
+            self.send("fetch_agent_timeline_response", requestId=req, epoch="archived", direction="tail", entries=[dict(seqStart=1, item=dict(type="assistant_message", text="Archived review completed."))])
         elif kind == "fetch_agent_timeline_request":
             self.agent = next(a for a in self.agents if a["id"] == message["agentId"])
             self.history = self.histories[self.agent["id"]]
@@ -192,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
                       window=dict(minSeq=1, maxSeq=len(self.history), nextSeq=len(self.history) + 1),
                       startCursor=dict(epoch="fixture-epoch", seq=1), endCursor=dict(epoch="fixture-epoch", seq=len(self.history)),
                       hasOlder=False, hasNewer=False, error=None,
-                      entries=[dict(item=item, seqStart=i, seqEnd=i, timestamp=NOW, provider="claude", sourceSeqRanges=[dict(startSeq=i, endSeq=i)], collapsed=[]) for i, item in enumerate(self.history, 1)])
+                      entries=[dict(item=item, seqStart=i, seqEnd=i, timestamp=NOW, turnId=self.timeline_turns.get((self.agent["id"], i), ""), provider="claude", sourceSeqRanges=[dict(startSeq=i, endSeq=i)], collapsed=[]) for i, item in enumerate(self.history, 1)])
         elif kind == "send_agent_message_request":
             self.agent = next(a for a in self.agents if a["id"] == message["agentId"])
             self.history = self.histories[self.agent["id"]]
@@ -216,11 +296,50 @@ class Handler(BaseHTTPRequestHandler):
                 self.send("agent_permission_resolved", agentId=self.agent["id"], requestId=permission["id"])
             self.agent["pendingPermissions"] = []
             self.agent["status"] = "running"
-            self.agent["activeTurn"] = dict(turnId="turn-" + mid, startedAt=NOW)
+            started_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()) if TOOL_PRESENTATION else NOW
+            self.agent["activeTurn"] = dict(turnId="turn-" + mid, startedAt=started_at)
             self.send("agent_status", agentId=self.agent["id"], info=self.agent)
-            self.send("agent_stream", agentId=self.agent["id"], timestamp=NOW, event=dict(type="turn_started", turnId="turn-" + mid, provider="claude"))
+            self.send("agent_stream", agentId=self.agent["id"], timestamp=started_at, event=dict(type="turn_started", turnId="turn-" + mid, provider="claude"))
             if message["text"].lower().startswith("hold"):
                 self.item(dict(type="assistant_message", text="Holding this turn until Stop. You can steer or queue messages.", messageId="hold-" + mid))
+                return
+            command = message['text'].lower()
+            if TOOL_PRESENTATION and command.startswith('tools-'):
+                self.item(dict(type='assistant_message', text='Tool presentation fixture', messageId='tools-intro-'+mid))
+                self.item(dict(type='tool_call', name='exec_command', callId='shell-'+mid, status='completed', detail=dict(type='shell', command='git status --short', output=' M app/Main.kt')))
+                self.item(dict(type='tool_call', name='read_file', callId='read-'+mid, status='completed', detail=dict(type='read', filePath='/home/dev/paseo/app/Main.kt', content=FILES['app/Main.kt'])))
+                self.item(dict(type='tool_call', name='exec_command', callId='failed-'+mid, status='failed', error='Permission denied: fixture', detail=dict(type='shell', command='cat private.txt', output='cat: Permission denied')))
+                self.item(dict(type='tool_call', name='exec_command', callId='live-'+mid, status='running', detail=dict(type='shell', command='sleep 30', output=None)))
+                if command == 'tools-complete':
+                    self.item(dict(type='tool_call', name='exec_command', callId='live-'+mid, status='completed', detail=dict(type='shell', command='sleep 30', output='done')))
+                    self.item(dict(type='assistant_message', text='All fixture tools finished.', messageId='tools-final-'+mid))
+                    self.agent.update(status='idle', activeTurn=None)
+                    self.send('agent_stream', agentId=self.agent['id'], timestamp=NOW, event=dict(type='turn_completed', provider='claude'))
+                    self.send('agent_status', agentId=self.agent['id'], info=self.agent)
+                return
+            if MARKDOWN_IMAGES and command.startswith('image-'):
+                images = {
+                    'image-local': '前文\n![Image](file:///home/dev/paseo/assets/phone%20image.png)\n后文',
+                    'image-outside': '![Outside](file:///tmp/fixture-image.png)',
+                    'image-relative': '![Relative](assets/phone%20image.png)',
+                    'image-http': '![Web](http://10.0.2.2:6768/fixture-image.png)',
+                    'image-data': '![Data](data:image/png;base64,' + base64.b64encode(IMAGE_BYTES).decode() + ')',
+                    'image-retry': '![Retry](file:///home/dev/paseo/assets/retry.png)',
+                    'image-code': '```text\n![NotAnImage](file:///home/dev/paseo/assets/not-loaded.png)\n```',
+                }
+                if command == 'image-user':
+                    self.item(dict(type='user_message', text='Remote attachment', messageId='remote-image-'+mid,
+                                   images=[dict(data=base64.b64encode(IMAGE_BYTES).decode(), mimeType='image/png')]))
+                    reply = 'Remote image fixture'
+                else:
+                    reply = images.get(command, 'Unknown image fixture')
+                # Split the Markdown to exercise a streamed, initially incomplete image node.
+                pivot = min(len(reply), 20)
+                for chunk in (reply[:pivot], reply[pivot:]):
+                    if chunk: self.item(dict(type='assistant_message', text=chunk, messageId='image-reply-'+mid))
+                self.agent.update(status='idle', activeTurn=None)
+                self.send('agent_stream', agentId=self.agent['id'], timestamp=NOW, event=dict(type='turn_completed', provider='claude'))
+                self.send('agent_status', agentId=self.agent['id'], info=self.agent)
                 return
             for chunk in ["This ", "response ", "arrives ", "as ", "streamed ", "chunks.\n\n", "Please approve the sample command below."]:
                 self.item(dict(type="assistant_message", text=chunk, messageId="reply-" + req))
@@ -319,7 +438,15 @@ class Handler(BaseHTTPRequestHandler):
             file = None
             directory = None
             if message["mode"] == "file":
-                file = dict(path=path, kind="text", encoding="utf-8", content=FILES.get(path, ""), size=len(FILES.get(path, "")), modifiedAt=NOW, revision="fixture-v1")
+                if MARKDOWN_IMAGES and path.endswith(('phone image.png', 'fixture-image.png', 'retry.png')):
+                    self.image_attempts[path] = self.image_attempts.get(path, 0) + 1
+                    self.audit('image-read', cwd=message.get('cwd'), path=path, attempt=self.image_attempts[path], sha256=hashlib.sha256(IMAGE_BYTES).hexdigest())
+                    if path.endswith('retry.png') and self.image_attempts[path] == 1:
+                        self.send('file_explorer_response', requestId=req, cwd=message['cwd'], path=path, mode='file', file=None, directory=None, error='Fixture image unavailable')
+                        return
+                    file = dict(path=path, kind='image', encoding='base64', content=base64.b64encode(IMAGE_BYTES).decode(), mimeType='image/png', size=len(IMAGE_BYTES), modifiedAt=NOW, revision='fixture-v1')
+                else:
+                    file = dict(path=path, kind="text", encoding="utf-8", content=FILES.get(path, ""), size=len(FILES.get(path, "")), modifiedAt=NOW, revision="fixture-v1")
             else:
                 entries = [dict(name="README.md", path="README.md", kind="file"), dict(name="app", path="app", kind="directory")] if not path else [dict(name="Main.kt", path="app/Main.kt", kind="file")]
                 if ICON_GALLERY:
@@ -332,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
                             found[child] = dict(name=child, path=prefix + child, kind="directory" if "/" in remaining else "file")
                     entries = [found[key] for key in sorted(found)]
                 directory = dict(path=path, entries=[dict(**entry, size=0, modifiedAt=NOW) for entry in entries])
-            self.send("file_explorer_response", requestId=req, cwd=self.agent["cwd"], path=path, mode=message["mode"], file=file, directory=directory, error=None)
+            self.send("file_explorer_response", requestId=req, cwd=message.get("cwd", self.agent["cwd"]), path=path, mode=message["mode"], file=file, directory=directory, error=None)
         elif kind == "fs.file.write.request":
             FILES[message["path"]] = message["content"]
             self.send("fs.file.write.response", requestId=req, result=dict(status="written", modifiedAt=NOW, revision="fixture-v2", size=len(message["content"])))
@@ -375,11 +502,27 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sidebar", action="store_true", help="Enable sidebar statuses and usage reports")
+    parser.add_argument("--legacy-usage", action="store_true", help="Use the older provider usage endpoint")
+    parser.add_argument("--usage-unavailable", action="store_true", help="Report signed-out Codex account")
     parser.add_argument("--port", type=int, default=6768)
     parser.add_argument("--icon-gallery", action="store_true", help="Include sample files for native icon rendering smoke")
+    parser.add_argument("--copy-actions", action="store_true", help="Enable split assistant response and trailing tools for copy checks")
+    parser.add_argument("--agent-controls", action="store_true", help="Enable default/alias models and reasoning effort rejection fixtures")
+    parser.add_argument("--tool-presentation", action="store_true", help="Enable tool groups, failures and running footer fixtures")
+    parser.add_argument("--markdown-images", action="store_true", help="Enable deterministic Markdown image fixtures")
     parser.add_argument("--events-file", help="Record protocol assertions for interaction smoke")
     args = parser.parse_args()
     EVENTS_FILE = args.events_file
+    MARKDOWN_IMAGES = args.markdown_images
+    TOOL_PRESENTATION = args.tool_presentation
+    AGENT_CONTROLS = args.agent_controls
+    COPY_ACTIONS = args.copy_actions
+    SIDEBAR = args.sidebar
+    LEGACY_USAGE = args.legacy_usage
+    USAGE_UNAVAILABLE = args.usage_unavailable
+    if MARKDOWN_IMAGES:
+        IMAGE_BYTES = (Path(__file__).resolve().parent.parent.parent / 'paseo/packages/website/public/phone-1.png').read_bytes()
     if args.icon_gallery:
         ICON_GALLERY = True
         for name in ["Main.kt", "App.tsx", "README.md", "script.py", "build.gradle", "package.json", "shell.sh", "sample.rs", "sample.svg", "LICENSE", "unknown.custom"]:

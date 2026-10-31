@@ -8,20 +8,29 @@ fun conversationPresentation(rows: List<TimelineRow>, running: Boolean, expanded
     while (index < rows.size) {
         val host = rows[index]
         result += host
-        if (host.type != "user_message") { index++; continue }
-        val end = ((index + 1) until rows.size).firstOrNull { rows[it].type == "user_message" } ?: rows.size
+        if (!host.isTurnTrigger()) { index++; continue }
+        val end = ((index + 1) until rows.size).firstOrNull { !continuesTimelineTurn(rows[it - 1], rows[it]) } ?: rows.size
         val reply = ((index + 1) until end).lastOrNull { rows[it].type == "assistant_message" }
         val folded = reply?.let { rows.subList(index + 1, it) }.orEmpty()
         val work = folded.any { it.type in setOf("tool_call", "todo", "assistant_message") }
         if (reply != null && work && (end < rows.size || !running)) {
-            val tools = folded.count { it.type == "tool_call" }
-            result += TimelineRow("summary:${host.key}", "turn_summary", title = if (tools > 0) "$tools 项操作" else "查看过程", messageId = host.key)
-            if (host.key in expanded) result += folded else result += folded.filter { it.type == "compaction" }
+            result += TimelineRow("summary:${host.key}", "turn_summary", title = toolSummary(folded), messageId = host.key)
+            if (host.key in expanded) result += folded else result += folded.filter { it.isTurnTrigger() || it.type == "compaction" }
             result += rows.subList(reply, end)
         } else result += rows.subList(index + 1, end)
         index = end
     }
     return result
+}
+
+/** Expanded turn details render individually inside an indent rail, without regrouping. */
+fun expandedTurnWorkKeys(rows: List<TimelineRow>, expanded: Set<String>): Set<String> = buildSet {
+    rows.forEachIndexed { index, host ->
+        if (host.key !in expanded || !host.isTurnTrigger()) return@forEachIndexed
+        val end = ((index + 1) until rows.size).firstOrNull { !continuesTimelineTurn(rows[it - 1], rows[it]) } ?: rows.size
+        val reply = ((index + 1) until end).lastOrNull { rows[it].type == "assistant_message" } ?: return@forEachIndexed
+        rows.subList(index + 1, reply).filterNot { it.isTurnTrigger() || it.type == "compaction" }.forEach { add(it.key) }
+    }
 }
 
 fun forgeAttachment(item: kotlinx.serialization.json.JsonObject, modern: Boolean): ChatAttachment {

@@ -87,6 +87,8 @@ class TimelineBuffer {
                 messageId = messageId, turnId = entry.turnId, timestamp = entry.timestamp,
                 images = item.array("images").mapNotNull { it as? JsonObject },
                 attachments = item.array("attachments").mapNotNull { it as? JsonObject },
+                error = item["error"]?.takeUnless { it is JsonNull }, metadata = item.obj("metadata"),
+                agentMessage = item["agentMessage"] as? JsonObject,
             )
             if (type == "tool_call") {
                 val identity = "${entry.turnId}:${item.string("callId")}"

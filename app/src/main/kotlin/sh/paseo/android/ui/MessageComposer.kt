@@ -38,7 +38,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
     onAlternateSend: (() -> Unit)? = null, behavior: SendBehavior = SendBehavior.Steer, modEnter: Boolean = false,
     cancelling: Boolean = false, hasAttachments: Boolean = false, submitOnEnter: Boolean = false,
     onReceiveFiles: ((List<android.net.Uri>) -> Unit)? = null, readSentMessages: (() -> List<String>)? = null, cursorRequest: Pair<String, Int>? = null, onSelection: (Int) -> Unit = {}, trailingControls: @Composable () -> Unit = {}, attachments: @Composable () -> Unit = {},
-    options: @Composable RowScope.() -> Unit) {
+    scrollOptions: Boolean = true, options: @Composable RowScope.() -> Unit) {
     val receiveFiles by rememberUpdatedState(onReceiveFiles)
     val acceptsContent by rememberUpdatedState(enabled)
     val receiver = remember { object : ReceiveContentListener {
@@ -123,7 +123,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
                 val placeable = measurable.measure(constraints.copy(minWidth = constraints.minWidth + bleed * 2, maxWidth = constraints.maxWidth + bleed * 2))
                 layout(placeable.width - bleed * 2, placeable.height) { placeable.placeRelative(-bleed, 0) }
             }, verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, content = options)
+                Row(Modifier.weight(1f).then(if (scrollOptions) Modifier.horizontalScroll(rememberScrollState()) else Modifier), verticalAlignment = Alignment.CenterVertically, content = options)
                 trailingControls()
                 Spacer(Modifier.width(4.dp))
                 val active = canSend && (!sending || stop) && !cancelling

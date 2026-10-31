@@ -55,6 +55,7 @@ data class Agent(
     val activeTurn: JsonObject? = null,
     val features: List<JsonObject> = emptyList(),
     val capabilities: JsonObject = jsonObject(), val thinkingOptionId: String? = null,
+    val runtimeInfo: JsonObject? = null,
 ) {
     val displayTitle: String get() = title?.takeIf { it.isNotBlank() } ?: "新会话"
     val currentTurnId: String get() = activeTurn?.string("turnId").orEmpty().ifBlank { activeTurnId.orEmpty() }
@@ -64,11 +65,12 @@ data class Agent(
 data class Provider(val provider: String, val available: Boolean = false, val error: String? = null)
 @Serializable
 data class ModelOption(val id: String, val label: String = "", val name: String = "",
-    val thinkingOptions: List<ModeOption> = emptyList(), val defaultThinkingOptionId: String? = null) {
+    val thinkingOptions: List<ModeOption> = emptyList(), val defaultThinkingOptionId: String? = null,
+    val aliases: List<String> = emptyList(), val isDefault: Boolean = false, val isSelectable: Boolean = true) {
     val displayName: String get() = label.ifBlank { name.ifBlank { id } }
 }
 @Serializable
-data class ModeOption(val id: String, val label: String = "", val description: String? = null) {
+data class ModeOption(val id: String, val label: String = "", val description: String? = null, val isDefault: Boolean = false) {
     val displayName: String get() = label.ifBlank { id }
 }
 @Serializable
@@ -78,7 +80,7 @@ data class Workspace(
     val projectKind: String = "directory", val workspaceKind: String = "directory",
     val name: String, val title: String? = null, val status: String = "done",
     val pinnedAt: String? = null, val activityAt: String? = null,
-    val gitRuntime: JsonObject? = null, val diffStat: JsonObject? = null,
+    val gitRuntime: JsonObject? = null, val diffStat: JsonObject? = null, val projectKey: String? = null,
 ) {
     val cwd: String get() = workspaceDirectory ?: projectRootPath
     val context: WorkspaceContext get() = WorkspaceContext(id, cwd)
@@ -87,20 +89,25 @@ data class Workspace(
 @Serializable
 data class Project(
     val projectId: String, val projectDisplayName: String, val projectRootPath: String,
-    val projectKind: String = "directory",
-)
+    val projectKind: String = "directory", val projectKey: String? = null,
+) {
+    fun identityKey(serverId: String): String = projectKey?.takeIf { it.isNotBlank() } ?: JsonArray(listOf(JsonPrimitive(serverId), JsonPrimitive(projectId))).toString()
+}
 data class WorkspaceContext(val id: String, val cwd: String)
 data class TimelineRow(
     val key: String, val type: String, val text: String = "", val title: String = "",
     val status: String = "", val detail: JsonObject = jsonObject(),
     val messageId: String = "", val turnId: String = "", val timestamp: String = "",
     val images: List<JsonObject> = emptyList(), val attachments: List<JsonObject> = emptyList(),
+    val error: JsonElement? = null, val metadata: JsonObject = jsonObject(),
+    val agentMessage: JsonObject? = null,
 )
 data class TimelinePage(
     val epoch: String, val startSeq: Long?, val endSeq: Long?, val hasOlder: Boolean,
 )
 enum class ConnectionStatus { Disconnected, Connecting, Connected, Reconnecting }
 data class PaseoState(
+    val serverId: String = "",
     val host: Host? = null,
     val connection: ConnectionStatus = ConnectionStatus.Disconnected,
     val serverName: String = "", val features: JsonObject = jsonObject(), val capabilities: JsonObject = jsonObject(),
@@ -121,7 +128,7 @@ data class PaseoState(
 ) {
     val selectedWorkspace: Workspace? get() = workspaces.find { it.id == selectedWorkspaceId }
     val workspaceAgents: List<Agent> get() = selectedWorkspace?.let { workspace -> agents.filter(workspace::contains) }.orEmpty()
-    val projects: List<Project> get() = (workspaces.map { Project(it.projectId, it.projectDisplayName, it.projectRootPath, it.projectKind) } + emptyProjects).distinctBy { it.projectId }
+    val projects: List<Project> get() = (workspaces.map { Project(it.projectId, it.projectDisplayName, it.projectRootPath, it.projectKind, it.projectKey) } + emptyProjects).distinctBy { it.projectId }
     val selectedAgent: Agent? get() = agents.find { it.id == selectedAgentId }
     val connected: Boolean get() = connection == ConnectionStatus.Connected
 }

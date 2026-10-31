@@ -33,6 +33,7 @@ class WorkspaceFlowTest {
                     "agent.timeline.set_subscription.request" -> jsonObject("subscriptionId" to "timeline")
                     "fetch_agent_timeline_request" -> jsonObject("agent" to agent, "entries" to emptyList<Any>(), "epoch" to "e1")
                     "list_terminals_request" -> jsonObject("terminals" to emptyList<Any>())
+                    "file_explorer_request" -> jsonObject("file" to if (m.string("path") == "image.png") jsonObject("kind" to "image", "encoding" to "base64", "content" to "aW1hZ2UgYnl0ZXM=") else jsonObject("kind" to "text", "encoding" to "utf-8", "content" to "text"))
                     else -> jsonObject()
                 }
                 reply(m.string("type") + ".reply", JsonObject(payload + ("requestId" to JsonPrimitive(id))))
@@ -41,6 +42,23 @@ class WorkspaceFlowTest {
     }
     private suspend fun awaitCatalog(repository: PaseoRepository) = withTimeout(5_000) {
         repository.state.first { it.catalogLoaded && it.agents.isNotEmpty() }
+    }
+    @Test fun readsImageFromSelectedHostAndRejectsNonImages() = runBlocking {
+        val server = server(); val repository = PaseoRepository()
+        try {
+            val host = Host(name = "Test", url = server.url("/ws").toString())
+            repository.connect(host); awaitCatalog(repository)
+            assertArrayEquals("image bytes".toByteArray(), repository.readImage(host.id, "/project", "image.png"))
+            val request = requests.last { it.string("type") == "file_explorer_request" }
+            assertEquals("/project", request.string("cwd"))
+            assertEquals("image.png", request.string("path"))
+            assertEquals(PaseoRepository.MAX_DISPLAY_IMAGE_BYTES.toLong(), request.long("maxBytes"))
+            assertFalse(request.bool("acceptBinary"))
+            try { repository.readImage(host.id, "/project", "not-image.txt"); fail("Expected a non-image to be rejected") }
+            catch (_: IllegalArgumentException) { }
+            try { repository.readImage("other-host", "/project", "image.png"); fail("Expected a different host to be rejected") }
+            catch (_: IllegalStateException) { }
+        } finally { repository.close(); server.close() }
     }
     @Test fun catalogCreationAndAgentMembershipUseWorkspaceIdentity() = runBlocking {
         val server = server(); val repository = PaseoRepository()

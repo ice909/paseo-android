@@ -8,7 +8,10 @@ import kotlinx.serialization.json.*
 
 /** One active host, one catalog subscription, and one viewed timeline. No Android dependencies. */
 class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
-    companion object { const val PCM_FORMAT = "audio/pcm;rate=16000;bits=16" }
+    companion object {
+        const val PCM_FORMAT = "audio/pcm;rate=16000;bits=16"
+        const val MAX_DISPLAY_IMAGE_BYTES = 12 * 1024 * 1024
+    }
     private val dispatcher = Dispatchers.Default.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val _state = MutableStateFlow(PaseoState())
@@ -47,7 +50,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     workspaceSubscription = null
                     val info = socket.open(host)
                     creationLifecycle = info.obj("features").bool("creationLifecycle")
-                    _state.update { it.copy(connection = ConnectionStatus.Connected, serverName = info.string("hostname").ifBlank { host.name }, features = info.obj("features"), capabilities = info.obj("capabilities"), error = null) }
+                    _state.update { it.copy(connection = ConnectionStatus.Connected, serverName = info.string("hostname").ifBlank { host.name }, serverId = info.string("serverId"), features = info.obj("features"), capabilities = info.obj("capabilities"), error = null) }
                     coroutineScope {
                         launch {
                             fetchAgents(subscribe = true)
@@ -261,10 +264,47 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             snapshot
         }
     }
+    suspend fun sidebarProjects(): List<Project> {
+        if (!state.value.features.bool("projectList")) return emptyList()
+        return socket.request("project.list.request", expectedGeneration = socket.connectionToken())
+            .array("projects").map { wireJson.decodeFromJsonElement<Project>(it) }
+    }
+
+    suspend fun usageReports(forceRefresh: Boolean = false): List<UsageEntry> {
+        val features = state.value.features
+        val generation = socket.connectionToken()
+        if (features.bool("usageSources")) {
+            val reports = java.util.concurrent.ConcurrentHashMap<String, JsonObject>()
+            socket.request("usage.list_reports.request", "forceRefresh" to forceRefresh,
+                expectedGeneration = generation, onUpdate = { payload ->
+                    val report = payload.obj("report")
+                    if (report.string("id").isNotBlank()) reports[report.string("id")] = report
+                })
+            return reports.values.map(::parseUsageEntry).sortedBy { it.sourceId + it.id }
+        }
+        check(features.bool("providerUsageList")) { "当前主机版本不支持用量查询，请更新 Paseo 主机" }
+        return socket.request("provider.usage.list.request", expectedGeneration = generation)
+            .array("providers").map { parseLegacyUsage(it.jsonObject) }
+    }
+
+    suspend fun historyPage(query: String = "", cursor: String? = null): Pair<List<Agent>, String?> {
+        val result = socket.request("fetch_agent_history_request", "search" to query.ifBlank { null },
+            "sort" to listOf(jsonObject("key" to "updated_at", "direction" to "desc")),
+            "page" to jsonObject("limit" to 100, "cursor" to cursor))
+        return result.array("entries").map { wireJson.decodeFromJsonElement<Agent>(it.jsonObject.obj("agent")) } to
+            result.obj("pageInfo").string("nextCursor").ifBlank { null }
+    }
+
+    suspend fun historyTranscript(agentId: String): List<TimelineRow> {
+        val result = socket.request("fetch_agent_timeline_request", "agentId" to agentId,
+            "direction" to "tail", "limit" to 200, "projection" to "canonical")
+        return TimelineBuffer().apply { hydrate(result) }.rows()
+    }
+
     suspend fun modes(provider: String, cwd: String): List<ModeOption> = socket.request("list_provider_modes_request",
         "provider" to provider, "cwd" to cwd.ifBlank { null }).array("modes").map { wireJson.decodeFromJsonElement<ModeOption>(it) }
-    suspend fun setModel(id: String, model: String) { socket.request("set_agent_model_request", "agentId" to id, "modelId" to model) }
-    suspend fun setMode(id: String, mode: String) { socket.request("set_agent_mode_request", "agentId" to id, "modeId" to mode) }
+    suspend fun setModel(id: String, model: String) { requireAgentControlAccepted(socket.request("set_agent_model_request", "agentId" to id, "modelId" to model)) }
+    suspend fun setMode(id: String, mode: String) { requireAgentControlAccepted(socket.request("set_agent_mode_request", "agentId" to id, "modeId" to mode)) }
     suspend fun commands(id: String): List<JsonObject> = socket.request("list_commands_request", "agentId" to id).array("commands").map { it.jsonObject }
     suspend fun directorySuggestions(query: String): List<JsonObject> = socket.request("directory_suggestions_request",
         "query" to query, "includeDirectories" to true, "includeFiles" to false, "limit" to 8).array("entries").map { it.jsonObject }
@@ -288,8 +328,8 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             "messageId" to messageId, "activeTurnBehavior" to behavior, "images" to images, "attachments" to attachments)
         if (result.string("deliveryStatus") == "queued") "queued" else "accepted"
     }
-    suspend fun setFeature(id: String, feature: String, value: JsonElement) { socket.request("set_agent_feature_request", "agentId" to id, "featureId" to feature, "value" to value) }
-    suspend fun setThinking(id: String, option: String?) { socket.request("set_agent_thinking_request", "agentId" to id, "thinkingOptionId" to (option?.let(::JsonPrimitive) ?: JsonNull)) }
+    suspend fun setFeature(id: String, feature: String, value: JsonElement) { requireAgentControlAccepted(socket.request("set_agent_feature_request", "agentId" to id, "featureId" to feature, "value" to value)) }
+    suspend fun setThinking(id: String, option: String?) { requireAgentControlAccepted(socket.request("set_agent_thinking_request", "agentId" to id, "thinkingOptionId" to (option?.let(::JsonPrimitive) ?: JsonNull))) }
     suspend fun rewindAgent(id: String, messageId: String, mode: String) {
         require(mode in setOf("conversation", "files", "both"))
         val result = socket.request("agent.rewind.request", "agentId" to id, "messageId" to messageId, "mode" to mode)
@@ -326,6 +366,21 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     suspend fun files(cwd: String, path: String = "", file: Boolean = false): JsonObject = socket.request(
         "file_explorer_request", "cwd" to cwd, "path" to path, "mode" to if (file) "file" else "list", "maxBytes" to 1_048_576,
     )
+    /** Use the daemon's legacy base64 response so direct and encrypted relay connections both work. */
+    suspend fun readImage(hostId: String, cwd: String, path: String): ByteArray {
+        check(state.value.host?.id == hostId && state.value.connected) { "主机未连接" }
+        val generation = socket.connectionToken()
+        val result = socket.request("file_explorer_request", "cwd" to cwd, "path" to path, "mode" to "file",
+            "maxBytes" to MAX_DISPLAY_IMAGE_BYTES, "acceptBinary" to false, expectedGeneration = generation)
+        check(state.value.host?.id == hostId && state.value.connected && socket.connectionToken() == generation) { "主机连接已改变" }
+        val file = result.obj("file")
+        require(file.string("kind") == "image" && file.string("encoding") == "base64") { "主机未返回图片" }
+        val content = file.string("content")
+        require(content.length <= ((MAX_DISPLAY_IMAGE_BYTES + 2L) / 3L) * 4L) { "图片过大" }
+        return withContext(Dispatchers.IO) {
+            java.util.Base64.getDecoder().decode(content).also { require(it.size <= MAX_DISPLAY_IMAGE_BYTES) { "图片过大" } }
+        }
+    }
     suspend fun saveFile(cwd: String, file: JsonObject, content: String): JsonObject {
         val result = socket.request("fs.file.write.request", "cwd" to cwd, "path" to file.string("path"),
             "content" to content, "expectedModifiedAt" to file.string("modifiedAt"), "expectedRevision" to file.string("revision").ifBlank { null })
@@ -390,9 +445,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     "permission_resolved" -> permission(agentId, null, event.string("requestId"))
                     "turn_started", "turn_completed", "turn_canceled", "turn_failed" -> {
                         _state.update { current -> current.copy(agents = current.agents.map {
-                            if (it.id != agentId) it else it.copy(status = when (event.string("type")) {
-                                "turn_started" -> "running"; "turn_failed" -> "error"; else -> "idle"
-                            }, activeTurn = null, activeTurnId = event.string("turnId").takeIf { _ -> event.string("type") == "turn_started" })
+                            if (it.id != agentId) it else it.applyTurnLifecycle(event, payload.string("timestamp"))
                         }) }
                         if (agentId == state.value.selectedAgentId) publishTimeline()
                     }

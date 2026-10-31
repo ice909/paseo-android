@@ -42,6 +42,9 @@ def node(value, attribute="text", contains=False):
             time.sleep(.3)
             continue
         if value == "已连接":
+            connected = next((n for n in nodes if n.get("content-desc") == "管理主机，已连接"), None)
+            if connected is not None:
+                return connected
             allow = next((n for n in nodes if n.attrib.get("resource-id", "").endswith("/permission_allow_button")), None)
             if allow is not None:
                 if args.deny_lan_once and not denied_lan_once:
@@ -56,7 +59,7 @@ def node(value, attribute="text", contains=False):
                     print("lan-permission-granted: passed", flush=True)
                 deadline = time.monotonic() + 15
                 continue
-            if not any(n.attrib.get("text") in ("已连接", "管理主机") for n in nodes) and time.monotonic() - last_sidebar_attempt > 3:
+            if not any(n.attrib.get("text") in ("已连接", "管理主机") or n.get("content-desc") == "关闭侧栏" or n.get("content-desc", "").startswith("管理主机，") for n in nodes) and time.monotonic() - last_sidebar_attempt > 3:
                 menu = next((n for n in nodes if n.attrib.get("content-desc") == "打开侧栏"), None)
                 if menu is not None:
                     tap(menu)
@@ -105,7 +108,7 @@ def open_appearance():
     while time.monotonic() < deadline:
         try:
             nodes = list(tree().iter("node"))
-            settings = next((n for n in nodes if n.get("text") == "设置"), None)
+            settings = next((n for n in nodes if (n.get("text") == "设置" or n.get("content-desc") == "设置")), None)
             if settings is not None:
                 tap(settings)
                 node("外观")
@@ -113,7 +116,7 @@ def open_appearance():
             menu = next((n for n in nodes if n.get("content-desc") == "打开侧栏"), None)
             if menu is not None:
                 tap(menu)
-                click("设置")
+                click("设置", "content-desc")
                 node("外观")
                 return
         except (ET.ParseError, subprocess.CalledProcessError):
@@ -211,13 +214,15 @@ def main():
     click("Second agent")
     node("Native client review")
     screenshot("second-agent")
-    click("Sonnet (fixture)")
+    click("模型和思考强度", "content-desc")
+    click("模型")
     click("Opus (fixture)")
     node("Opus (fixture)")
-    click("Default")
+    click("权限模式")
     click("Plan")
     node("Plan")
     screenshot("agent-options")
+    click("关闭模型设置", "content-desc")
     fill(0, "Check streaming")
     click("发送消息", "content-desc")
     hide_keyboard()

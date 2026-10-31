@@ -23,6 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import sh.paseo.android.AppViewModel
+import sh.paseo.android.core.Agent
+import sh.paseo.android.core.ConversationKey
+import sh.paseo.android.core.PaseoState
 
 private data class Block(val type: String, val text: String, val language: String = "")
 private fun parseBlocks(text: String): List<Block> {
@@ -52,7 +56,13 @@ private fun parseBlocks(text: String): List<Block> {
     }
     flush()
     if (fenced) result.add(Block("code", code.toString().trimEnd('\n'), language))
-    return result
+    return result.flatMap { block ->
+        if (block.type !in setOf("paragraph", "heading", "quote")) listOf(block)
+        else markdownImageParts(block.text).mapNotNull { part ->
+            if (part.imageSource != null) Block("image", part.imageSource, part.text)
+            else part.text.trim('\n').takeIf { it.isNotBlank() }?.let { block.copy(text = it) }
+        }
+    }
 }
 
 private val inlinePattern = Regex("""(`[^`]+`|\*\*[^*]+\*\*|\*[^*\n]+\*|\[[^\]]+\]\(https?://[^\s)]+\)|https?://[^\s<>]+)""")
@@ -82,13 +92,25 @@ private fun inlineText(text: String, linkColor: Color): AnnotatedString = buildA
 }
 
 @Composable
+fun MarkdownText(text: String, vm: AppViewModel, state: PaseoState, agent: Agent, key: ConversationKey, occurrence: String) {
+    MarkdownContent(text) { source, alt, index ->
+        MessageImage(source, alt, vm, state.connected, key.hostId, agent.cwd, "$occurrence:$index")
+    }
+}
+
+@Composable
 fun MarkdownText(text: String) {
+    MarkdownContent(text) { source, alt, _ -> Text(alt.ifBlank { source }, color = LocalPaseoPalette.current.foregroundMuted) }
+}
+
+@Composable
+private fun MarkdownContent(text: String, image: @Composable (String, String, Int) -> Unit) {
     val palette = LocalPaseoPalette.current
     // Parsing runs away from the UI thread; lazy timeline rows retain their stable identities.
     val blocks by produceState(emptyList<Block>(), text) { value = withContext(Dispatchers.Default) { parseBlocks(text) } }
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            blocks.forEach { block -> when (block.type) {
+            blocks.forEachIndexed { index, block -> when (block.type) {
                 "code" -> CodeBlock(block.text, language = block.language)
                 "heading" -> Text(inlineText(block.text, palette.accentBright), style = PaseoUiText.copy(fontSize = when (block.language) {
                     "1" -> 24.sp; "2" -> 21.sp; "3" -> 18.sp; "4" -> 17.sp; else -> 15.sp
@@ -97,6 +119,7 @@ fun MarkdownText(text: String) {
                     Text(inlineText(block.text, palette.accentBright), Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 }
                 "divider" -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                "image" -> image(block.text, block.language, index)
                 else -> Text(inlineText(block.text, palette.accentBright), style = PaseoUiText, lineHeight = 21.sp)
             } }
         }

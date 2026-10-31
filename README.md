@@ -10,29 +10,33 @@
 - 官方加密中继配对（`#offer=`、`relay://`、`#connect=`），支持 Noise NK protected 模式及旧版 NaCl 通道；校验配对公钥并拒绝不满足要求的降级连接。密码不进入中继 URL 或 HTTP 请求头。
 - 多主机配置、密码认证、局域网 / VPN / Tailscale 直连；「更多选项」保留手动地址与可选自定义名称。
 - 使用 Android Keystore 加密保存主机配置，进程重启后恢复连接，连接中断后指数退避重连。
-- 官方 Zinc 灰阶深浅色布局：项目 / 工作区侧栏、主机状态、移动端代理选择器、底部配置与消息输入、独立文件 / 改动面板。
+- 官方 Zinc 灰阶深浅色布局：项目 / 工作区侧栏、主机状态、移动端代理选择器、底部配置与消息输入；文件 / 改动面板从右侧全屏滑入，支持滑动和返回键关闭。
 - 新建工作区首页采用官方 compact 表单：56 dp 填充选择行、项目 / 主机 / 隔离 / 分支 / 启动方式，目录输入收进项目弹层；消息框使用官方的 16 dp 圆角、配色、间距和 28 dp 按钮。支持首条消息附件、听写、空工作区及直接启动终端。
 - 真实工作区目录订阅、分页、已加载工作区搜索、空项目 / 空工作区、工作区重命名、置顶和归档。
 - 在已有目录或从当前分支新建 Git worktree，连同首个代理和初始任务一起创建；已有工作区可追加多个代理。
-- 提供方 / 模型 / 模式选择，已有代理的模型和模式切换，斜杠命令建议。
+- 提供方 / 模型 / 模式选择，已有代理的模型和模式切换，斜杠命令建议。手机聊天输入框显示模型与当前思考强度，点击打开合并的模型设置面板；支持主机的默认模型、模型别名及实际运行配置。
+- 聊天顶部使用紧凑 AppBar，代理 / 终端切换和文件入口合并到标题栏；原生时间线从带渐变透明遮罩的标题栏下方滚过。
 - 使用创建请求幂等键和创建状态回执；同一草稿重试保留键，编辑配置后生成新键。现代创建协议用于支持 `creationLifecycle` 的 daemon，旧版提供基本创建兼容路径。
 - 历史消息分页、实时输出、工具调用及结果、思考过程、任务清单、权限允许 / 拒绝、交互式单选 / 多选 / 文本提问、停止执行。
+- 工具行显示命令 / 相对路径摘要，连续调用按操作类型汇总；手机使用可调整高度的底部详情面板，保留失败原因。运行回合使用官方六点动画和主机开始时间计算的耗时。
 - 官方默认 steer、interrupt / queue 发送偏好、运行中长按发送切换行为、队列编辑 / 立即发送 / 空闲时顺序发送；立即清空输入和乐观消息、失败草稿恢复、同一消息 ID 重试。
 - 按主机和代理隔离的加密持久草稿与未确认发送记录、展开编辑器、手机回车换行、斜杠命令和 @ 文件建议、模型 / 模式 / 思考强度 / 动态特性切换。
 - 图片粘贴 / 拖放和文件附件（单文件 50 MiB 上限）、图片缩放预览、Issue / PR 上下文附件、按代理能力回退对话 / 文件、已完成回合折叠与消息复制。
 - 官方 daemon 流式语音转写和语音对话协议：麦克风权限、取消、转写重试、文本追加 / 发送、静音、打断、播放确认；依赖主机启用对应语音服务。
-- 原生 Markdown 基础排版、链接、可选择文本、可复制代码块。
+- 原生 Markdown 基础排版、链接、可选择文本、可复制代码块；会话图片支持主机文件、网络链接和 Base64，点击可放大，单张读取上限 12 MiB。
 - 目录浏览、UTF-8 文本查看与编辑，使用主机文件版本进行并发修改检查。
 - 未提交 Git diff 查看。
 - 文本模式终端：选择 / 创建 / 关闭终端、发送命令、Ctrl+C / Esc / Tab / Enter、每秒抓取最近 300 行。
 - 未添加主机时使用官方欢迎页、Paseo 标志和 Lucide 图标；扫码、直接连接和配对链接三个入口均可用。配对弹层按官方尺寸、色值与输入框样式呈现，验证成功后保存主机。
 - 全应用图标使用官方同版 Lucide 与 Paseo 自定义资源，内置 9 种代理标志和 54 种文件类型图标；文件图标保留官方 OKLab 调色。
+- 侧栏保留 340dp 最大宽度，使用官方彩色项目首字母、左侧工作区状态和底部图标栏；支持项目折叠、搜索、排序、工作区重命名 / 固定 / 归档，以及历史搜索与归档记录预览（最近 200 条）。
+- 侧栏用量条读取主机账户的真实数据：兼容 `usage.list_reports` 分批推送与旧版 `provider.usage.list`；默认显示已用百分比，可查看时间窗口、重置时间，切换剩余百分比并手动刷新。需要主机支持用量查询并已登录相应账户。
 - 官方全部 8 个内置主题：Light、Dark、系统、Zinc、Midnight、Claude、Ghostty、纯黑；侧栏「设置 → 外观」即时切换并在本机保存。系统模式跟随设备深浅色；侧栏、聊天、diff、终端、弹窗及系统栏同步切换。
 - 系统返回、键盘避让。
 
 ## 当前边界
 
-推送通知、完整 VT 终端、插件 UI、归档历史入口、日程、完整工作树与 PR 管理尚未实现。工作树目前仅支持从当前分支创建；Git 改动面板目前仅展示未提交改动。Markdown 暂不解析完整表格、图片和数学公式。
+推送通知、完整 VT 终端、插件 UI、归档会话恢复、日程、完整工作树与 PR 管理尚未实现。工作树目前仅支持从当前分支创建；Git 改动面板目前仅展示未提交改动。Markdown 暂不解析完整表格和数学公式。
 
 协议根据上述官方源码版本实现。已使用隔离的官方 daemon 0.13.2 及其真实 `#offer=` 链接，经公共中继验证原生 Kotlin 网络层的工作区读取、文件读写与终端操作；聊天流、审批、提问和界面流程使用协议模拟服务验证。尚未使用用户真实 AI 代理执行任务；不同 daemon 版本兼容性和低端设备性能仍需实机验证。
 
@@ -189,6 +193,38 @@ PASEO_SMOKE_URL=ws://127.0.0.1:6769/ws run_gradle :core:test --tests '*RealDaemo
 
 界面和协议映射见 [docs/official-alignment.md](docs/official-alignment.md)。
 
+工具展示与面板颜色回归（先停止其他模拟服务，使用专用模拟器）：
+
+```sh
+python3 tools/mock_daemon.py --port 6768 --tool-presentation
+# 另一个终端；仅清除 emulator-5554 上的测试数据
+python3 tools/android_tool_presentation_smoke.py --reset
+```
+
+覆盖深浅主题的文字 / 图标实际像素、连续工具分组、命令和路径摘要、失败详情、单工具详情面板、执行中与停止后的回合状态。
+
+
+模型设置与紧凑标题栏回归（专用模拟器，先停止其他模拟服务）：
+
+```sh
+python3 tools/mock_daemon.py --port 6768 --agent-controls --events-file /tmp/paseo-controls-events.jsonl
+# 另一个终端；仅清除 emulator-5554 上的测试数据
+python3 tools/android_agent_controls_smoke.py --reset --events /tmp/paseo-controls-events.jsonl
+```
+
+覆盖默认模型、运行时模型别名、思考强度设置的实际请求与回显、拒绝提示、不支持思考选项的模型、单行标题栏、代理切换与草稿保留、文件面板、全屏编辑器。
+
+
+消息复制回归（专用模拟器，先停止其他模拟服务）：
+
+```sh
+python3 tools/mock_daemon.py --port 6768 --copy-actions --tool-presentation
+python3 tools/android_copy_smoke.py --reset
+```
+
+覆盖回复末尾的唯一复制按钮、尾随工具、原始 Markdown 剪贴板内容、折叠 / 展开不改变复制范围、运行时隐藏及停止后恢复复制。
+
+
 ## 参考
 
 - [官方协议源码](https://github.com/getpaseo/paseo/tree/abc97e0545bb92e43eb96027102d845657c0a2eb/packages/protocol)
@@ -198,3 +234,5 @@ PASEO_SMOKE_URL=ws://127.0.0.1:6769/ws run_gradle :core:test --tests '*RealDaemo
 Apache-2.0，详见 `LICENSE` 和 `NOTICE`。
 
 全应用图标验证：先以 `python3 tools/mock_daemon.py --port 6768 --icon-gallery` 启动模拟服务，再串行运行 `python3 tools/android_smoke.py --reset` 和 `python3 tools/android_icon_smoke.py`。后者检查侧栏、代理标志、diff、彩色文件图标（含 Kotlin 渐变）、主题菜单和终端；截图位于 `app/build/icon-smoke/`。
+
+侧栏回归：启动 `python3 tools/mock_daemon.py --port 6768 --sidebar --events-file /tmp/paseo-sidebar-events.jsonl` 后运行 `python3 tools/android_sidebar_smoke.py --reset --events-file /tmp/paseo-sidebar-events.jsonl`。`--legacy-usage` / `--usage-unavailable` 模拟旧接口及未登录状态；对应使用 UI 脚本的 `--usage-only` / `--unavailable`。仅在一次性模拟器上使用 `--reset`，截图位于 `app/build/sidebar-smoke/`。

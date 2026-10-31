@@ -7,12 +7,15 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -22,6 +25,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -32,16 +36,16 @@ import sh.paseo.android.AppViewModel
 import sh.paseo.android.core.*
 
 @Composable
-fun ChatScreen(vm: AppViewModel, state: PaseoState, onCreateAgent: () -> Unit) {
+fun ChatScreen(vm: AppViewModel, state: PaseoState, onCreateAgent: () -> Unit, topOverlayInset: Dp = 0.dp, expanded: Boolean = false, onFullscreenChange: (Boolean) -> Unit = {}) {
     val agent = state.selectedAgent
     if (agent == null) Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         EmptyState(PaseoIcons.Sparkles, "工作区已就绪", "新建一个代理，开始处理任务。")
         Button(onClick = onCreateAgent, enabled = state.connected) { PaseoGlyph(PaseoIcons.Plus); Text("新建代理") }
-    } else state.host?.let { host -> key(host.id, agent.id) { Conversation(vm, state, agent, ConversationKey(host.id, agent.id)) } }
+    } else state.host?.let { host -> key(host.id, agent.id) { Conversation(vm, state, agent, ConversationKey(host.id, agent.id), topOverlayInset, expanded, onFullscreenChange) } }
 }
 
 @Composable
-private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key: ConversationKey) {
+private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key: ConversationKey, topOverlayInset: Dp, expanded: Boolean, onFullscreenChange: (Boolean) -> Unit) {
     val sessions by vm.conversations.sessions.collectAsStateWithLifecycle()
     val session = sessions[key] ?: ConversationState()
     var cursor by remember { mutableIntStateOf(session.draft.text.length) }
@@ -76,18 +80,32 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var following by rememberSaveable { mutableStateOf(true) }
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var loadingModels by remember { mutableStateOf(false) }
+    var modelError by remember { mutableStateOf<String?>(null) }
+    var modelRetry by remember { mutableIntStateOf(0) }
     var models by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
     var commands by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     var setting by remember { mutableStateOf(false) }
+    var controlError by remember { mutableStateOf<String?>(null) }
+    fun updateControl(action: suspend () -> Unit) {
+        setting = true; controlError = null
+        vm.action {
+            try { action() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { controlError = error.message ?: "设置失败，请重试" }
+            finally { setting = false }
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.attachFiles(key, uris)
     }
-    LaunchedEffect(key, state.connected) {
+    LaunchedEffect(key, state.connected, agent.provider, agent.cwd, modelRetry) {
         if (!state.connected) return@LaunchedEffect
+        loadingModels = true; modelError = null
         try { models = vm.repository.models(agent.provider, agent.cwd) }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { /* The active/default model is still usable. */ }
+        catch (_: Exception) { modelError = "无法加载主机的模型选项" }
+        finally { loadingModels = false }
         try { commands = vm.repository.commands(agent.id) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { /* Commands remain available as typed text. */ }
@@ -96,7 +114,12 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
     val pending = session.optimistic.filterNot { it.id in confirmed }
     val rows = state.timeline + pending.map { message -> TimelineRow("local:${message.id}", "user_message", message.draft.text,
         status = message.delivery, messageId = message.id, turnId = message.turnId) }
-    val presented = remember(rows, agent.running, expandedTurns, collapse) { conversationPresentation(rows, agent.running, expandedTurns.toSet(), collapse) }
+    val turnActive = agent.activeTurn != null || agent.status == "running" || session.sending
+    val nestedKeys = remember(rows, expandedTurns, collapse) { if (collapse) expandedTurnWorkKeys(rows, expandedTurns.toSet()) else emptySet() }
+    val presented = remember(rows, turnActive, expandedTurns, collapse) {
+        groupToolRows(conversationPresentation(rows.filter(::visibleToolRow), turnActive, expandedTurns.toSet(), collapse), enabled = collapse, ungroupedKeys = nestedKeys)
+    }
+    val footers = remember(rows, turnActive) { completedAssistantFooters(rows.filter(::visibleToolRow), turnActive) }
     val last = rows.lastOrNull()
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress to (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 100) }
@@ -111,23 +134,33 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
         }
     }
     val activeBehavior = if (behavior == SendBehavior.Queue && agent.pendingPermissions.isNotEmpty()) SendBehavior.Interrupt else behavior
-    Column(Modifier.fillMaxSize().imePadding()) {
+    CompositionLocalProvider(LocalToolExpansion provides rememberToolExpansion()) {
+    Column(Modifier.fillMaxSize().then(if (expanded) Modifier.statusBarsPadding() else Modifier).imePadding()) {
         Box(Modifier.fillMaxWidth().then(if (expanded) Modifier.height(0.dp) else Modifier.weight(1f))) {
             if (state.loadingTimeline && rows.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (rows.isEmpty() && !state.loadingTimeline) EmptyState(PaseoIcons.Sparkles, "从一个任务开始", "描述你想完成的工作，代理将在主机上执行。", Modifier.fillMaxSize())
+            if (rows.isEmpty() && !state.loadingTimeline && !turnActive) EmptyState(PaseoIcons.Sparkles, "从一个任务开始", "描述你想完成的工作，代理将在主机上执行。", Modifier.fillMaxSize())
             else LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (agent.running) item("working") {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
-                        Text(when { session.cancelling -> "正在停止…"; agent.pendingPermissions.isNotEmpty() -> "等待你的确认"; else -> "代理正在工作…" }, style = MaterialTheme.typography.bodySmall, color = LocalPaseoPalette.current.foregroundMuted)
-                    }
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = topOverlayInset + 16.dp, bottom = 16.dp)) {
+                if (turnActive) item("working") {
+                    RunningTurnFooter(turnStartedAt(agent), session.cancelling, agent.pendingPermissions.isNotEmpty())
                 }
-                items(presented.asReversed(), key = { it.key }, contentType = { it.type }) { row ->
-                    if (row.type == "turn_summary") Row(Modifier.fillMaxWidth().clickable { expandedTurns = if (row.messageId in expandedTurns) expandedTurns - row.messageId else expandedTurns + row.messageId }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PaseoGlyph(PaseoIcons.Summary, modifier = Modifier.size(16.dp)); Text(row.title, style = MaterialTheme.typography.labelMedium)
-                        PaseoGlyph(if (row.messageId in expandedTurns) PaseoIcons.ChevronUp else PaseoIcons.ChevronDown, "展开或收起对话过程", Modifier.size(16.dp))
-                    } else TimelineItem(vm, state, agent, key, row, session.sentAttachments[row.messageId].orEmpty())
+                itemsIndexed(presented.asReversed(), key = { _, entry -> entry.key }, contentType = { _, entry -> if (entry.grouped) "tool_group" else entry.row.type }) { reverseIndex, entry ->
+                    val row = entry.row
+                    val footer = footers[entry.calls.lastOrNull()?.key ?: row.key]
+                    val next = presented.getOrNull(presented.lastIndex - reverseIndex + 1)
+                    val compactGap = (entry.grouped || row.groupable()) && next?.let { it.grouped || it.row.groupable() } == true
+                    val rail = LocalPaseoPalette.current.border
+                    Column(Modifier.then(if (row.key in nestedKeys) Modifier.drawBehind {
+                        drawLine(rail, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx())
+                    }.padding(start = 16.dp) else Modifier).padding(bottom = if (footer != null) 0.dp else if (compactGap) 4.dp else 16.dp)) {
+                        if (entry.grouped) ToolGroup(entry, agent.cwd)
+                        else if (row.type == "turn_summary") ToolBadge(row.title, icon = PaseoIcons.Summary,
+                            expanded = row.messageId in expandedTurns, onClick = {
+                                expandedTurns = if (row.messageId in expandedTurns) expandedTurns - row.messageId else expandedTurns + row.messageId
+                            })
+                        else TimelineItem(vm, state, agent, key, row, session.sentAttachments[row.messageId].orEmpty())
+                        if (footer != null) CompletedTurnFooter(footer)
+                    }
                 }
                 if (state.hasOlder) item("older") {
                     TextButton(onClick = { vm.action { vm.repository.loadOlder() } }, enabled = !state.loadingTimeline, modifier = Modifier.fillMaxWidth()) { Text(if (state.loadingTimeline) "加载中…" else "加载更早的消息") }
@@ -160,35 +193,20 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
             sending = session.sending || importing || audio.phase == "uploading", onSend = { following = true; if (audio.mode == "dictation") vm.audio.confirm(true) else vm.conversations.send(key) }, running = agent.running && audio.mode != "dictation",
             onStop = { vm.conversations.stop(key) }, onAlternateSend = { following = true; vm.conversations.send(key, alternate = true) },
             behavior = activeBehavior, modEnter = modEnter, cancelling = session.cancelling, hasAttachments = session.draft.attachments.isNotEmpty(),
-            expanded = expanded, onExpand = { expanded = !expanded }, modifier = if (expanded) Modifier.weight(1f) else Modifier,
+            expanded = expanded, onExpand = { onFullscreenChange(!expanded) }, modifier = if (expanded) Modifier.weight(1f) else Modifier,
             onReceiveFiles = { vm.attachFiles(key, it) }, readSentMessages = { rows.asReversed().filter { it.type == "user_message" && it.text.isNotBlank() }.map { it.text } }, cursorRequest = cursorRequest, onSelection = { cursor = it },
             trailingControls = { IconButton(onClick = { if (audio.mode == "voice") vm.audio.mute() else if (!audio.active) startAudio(false) }, enabled = state.connected && !importing && audio.mode != "dictation", modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Mic, if (audio.mode == "voice") "切换麦克风静音" else "语音输入", Modifier.size(18.dp), if (audio.active) LocalPaseoPalette.current.accent else LocalPaseoPalette.current.foregroundMuted) } },
-            attachments = { ChatAttachmentTray(session.draft.attachments) { vm.conversations.removeAttachment(key, it) } }, options = {
+            attachments = { ChatAttachmentTray(session.draft.attachments) { vm.conversations.removeAttachment(key, it) } }, scrollOptions = false, options = {
                 ChatComposerMenu(behavior, vm::setSendBehavior, { picker.launch(arrayOf("*/*")) }, { picker.launch(arrayOf("image/*")) }, { startAudio(true) }, { forgePicker = true }, collapse, { vm.setCollapseTurns(!collapse) })
-                ComposerChoice(models.find { it.id == agent.model }?.displayName ?: agent.model ?: agent.provider,
-                    models.map { it.id to it.displayName }, enabled = state.connected && !setting, icon = PaseoIcons.provider(agent.provider)) { model ->
-                    setting = true; vm.action { try { vm.repository.setModel(agent.id, model) } finally { setting = false } }
-                }
-                if (agent.availableModes.isNotEmpty()) ComposerChoice(agent.availableModes.find { it.id == agent.currentModeId }?.displayName ?: "模式",
-                    agent.availableModes.map { it.id to it.displayName }, enabled = state.connected && !setting) { mode ->
-                    setting = true; vm.action { try { vm.repository.setMode(agent.id, mode) } finally { setting = false } }
-                }
-                agent.features.forEach { feature ->
-                    val id = feature.string("id")
-                    if (feature.string("type") == "toggle") TextButton(enabled = state.connected && !setting, onClick = {
-                        setting = true; vm.action { try { vm.repository.setFeature(agent.id, id, kotlinx.serialization.json.JsonPrimitive(!feature.bool("value"))) } finally { setting = false } }
-                    }) { if (feature.bool("value")) PaseoGlyph(PaseoIcons.Check, modifier = Modifier.size(14.dp)); Text(feature.string("label"), style = MaterialTheme.typography.labelSmall) }
-                    else if (feature.string("type") == "select") ComposerChoice(feature.array("options").mapNotNull { it as? JsonObject }.find { it.string("id") == feature.string("value") }?.string("label") ?: feature.string("label"),
-                        feature.array("options").mapNotNull { it as? JsonObject }.map { it.string("id") to it.string("label") }, enabled = state.connected && !setting) { option ->
-                        setting = true; vm.action { try { vm.repository.setFeature(agent.id, id, kotlinx.serialization.json.JsonPrimitive(option)) } finally { setting = false } }
-                    }
-                }
-                val thinking = models.find { it.id == agent.model }?.thinkingOptions.orEmpty()
-                if (thinking.isNotEmpty()) ComposerChoice(thinking.find { it.id == agent.thinkingOptionId }?.displayName ?: "思考强度",
-                    thinking.map { it.id to it.displayName }, enabled = state.connected && !setting, icon = PaseoIcons.Brain) { option ->
-                    setting = true; vm.action { try { vm.repository.setThinking(agent.id, option) } finally { setting = false } }
-                }
+                CompactAgentControls(agent, models, enabled = state.connected && !setting,
+                    loading = loadingModels, modelError = modelError, actionError = controlError, onRetry = { modelRetry++ }, modifier = Modifier.weight(1f),
+                    onModel = { model -> updateControl { vm.repository.setModel(agent.id, model) } },
+                    onThinking = { option -> updateControl { vm.repository.setThinking(agent.id, option) } },
+                    onMode = { mode -> updateControl { vm.repository.setMode(agent.id, mode) } },
+                    onFeature = { id, value -> updateControl { vm.repository.setFeature(agent.id, id, value) } })
             })
+    }
+    ConversationToolSheet(rows, agent.cwd)
     }
 }
 
@@ -233,16 +251,10 @@ private fun ChatAutocomplete(vm: AppViewModel, state: PaseoState, agent: Agent, 
 @Composable
 private fun TimelineItem(vm: AppViewModel, state: PaseoState, agent: Agent, key: ConversationKey, row: TimelineRow, localAttachments: List<ChatAttachment>) {
     when (row.type) {
-        "user_message" -> ChatUserMessage(row, localAttachments, agent, state.connected, { vm.conversations.retryPending(key, row.messageId) }, { vm.conversations.editPending(key, row.messageId) }) { mode -> vm.rewind(key, row, mode) }
-        "assistant_message" -> Column { MarkdownText(row.text); if (row.text.isNotBlank()) MessageCopyButton(row.text) }
-        "reasoning" -> CollapsibleBlock("思考过程", row.text, PaseoIcons.Brain)
-        "tool_call" -> {
-            val detail = row.detail
-            val body = listOf(detail.string("command"), detail.string("filePath"), detail.string("unifiedDiff"), detail.string("output"), detail.string("content"), detail.string("text"), detail.string("log"),
-                if (detail.string("type") == "edit" && detail.string("unifiedDiff").isBlank()) "${detail.string("oldString")}\n→\n${detail.string("newString")}" else "",
-                detail["input"]?.takeUnless { it.toString() == "null" }?.toString().orEmpty()).filter { it.isNotBlank() }.joinToString("\n\n")
-            CollapsibleBlock(row.title, body, toolCallIcon(row.title, detail), isError = row.status == "failed", running = row.status == "running")
-        }
+        "user_message" -> ChatUserMessage(row, localAttachments, agent, state.connected, vm, key, { vm.conversations.retryPending(key, row.messageId) }, { vm.conversations.editPending(key, row.messageId) }) { mode -> vm.rewind(key, row, mode) }
+        "assistant_message" -> MarkdownText(row.text, vm, state, agent, key, "${agent.id}:${row.key}")
+        "reasoning" -> ReasoningMessage(row)
+        "tool_call" -> ToolMessage(row, agent.cwd)
         "todo" -> Surface(shape = RoundedCornerShape(12.dp), color = LocalPaseoPalette.current.surface0) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("任务进度", style = MaterialTheme.typography.labelLarge)
@@ -261,20 +273,6 @@ private fun TimelineItem(vm: AppViewModel, state: PaseoState, agent: Agent, key:
     }
 }
 
-@Composable
-private fun CollapsibleBlock(title: String, body: String, icon: Int, isError: Boolean = false, running: Boolean = false) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (running) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 1.5.dp)
-            else PaseoGlyph(icon, modifier = Modifier.size(17.dp), tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(title, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            if (isError) Text("失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
-            PaseoGlyph(if (expanded) PaseoIcons.ChevronUp else PaseoIcons.ChevronDown, if (expanded) "收起" else "展开", Modifier.size(18.dp))
-        }
-        if (expanded && body.isNotEmpty()) CodeBlock(body, Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp))
-    }
-}
 @Composable
 private fun PermissionCard(vm: AppViewModel, agentId: String, request: PermissionRequest, connected: Boolean) {
     var pending by remember(request) { mutableStateOf(false) }

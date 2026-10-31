@@ -11,8 +11,8 @@ android {
         applicationId = "sh.paseo.android"
         minSdk = 26
         targetSdk = 37
-        versionCode = 7
-        versionName = "0.7.0"
+        versionCode = 10
+        versionName = "0.10.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {

@@ -21,12 +21,13 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import java.io.File
 import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import sh.paseo.android.core.*
@@ -134,7 +135,8 @@ private fun AttachmentPreview(attachment: ChatAttachment, onDismiss: () -> Unit)
 }
 
 @Composable
-fun ChatUserMessage(row: TimelineRow, localAttachments: List<ChatAttachment>, agent: Agent, connected: Boolean, onRetryPending: () -> Unit = {}, onEditPending: () -> Unit = {}, onRewind: (String) -> Unit) {
+fun ChatUserMessage(row: TimelineRow, localAttachments: List<ChatAttachment>, agent: Agent, connected: Boolean,
+    vm: sh.paseo.android.AppViewModel, key: ConversationKey, onRetryPending: () -> Unit = {}, onEditPending: () -> Unit = {}, onRewind: (String) -> Unit) {
     val palette = LocalPaseoPalette.current
     var expanded by rememberSaveable { mutableStateOf(false) }
     var overflow by remember { mutableStateOf(false) }
@@ -146,6 +148,10 @@ fun ChatUserMessage(row: TimelineRow, localAttachments: List<ChatAttachment>, ag
         Surface(color = palette.surface3, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp), modifier = Modifier.widthIn(max = 680.dp)) {
             Column(Modifier.padding(16.dp)) {
                 ChatAttachmentTray(attachments)
+                if (localAttachments.none { it.isImage }) row.images.forEachIndexed { index, image ->
+                    val data = image.string("data")
+                    if (data.isNotBlank()) MessageImage("data:${image.string("mimeType").ifBlank { "image/png" }};base64,$data", "图片", vm, connected, key.hostId, agent.cwd, "${agent.id}:${row.key}:$index", thumbnail = true)
+                }
                 if (row.text.isNotEmpty()) SelectionContainer {
                     Text(row.text, style = PaseoUiText, color = palette.foreground, maxLines = if (expanded) Int.MAX_VALUE else 12,
                         overflow = TextOverflow.Ellipsis, onTextLayout = { overflow = it.hasVisualOverflow })
@@ -158,29 +164,36 @@ fun ChatUserMessage(row: TimelineRow, localAttachments: List<ChatAttachment>, ag
             TextButton(onClick = onEditPending) { Text("编辑") }
             TextButton(onClick = onRetryPending, enabled = connected) { Text("重试发送") }
         } else if (pending) Text(when (row.status) { "sending" -> "发送中…"; "queued" -> "主机已排队"; else -> "已发送" }, Modifier.padding(top = 4.dp), color = palette.foregroundExtraMuted, style = MaterialTheme.typography.labelSmall)
-        else if (row.text.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
-            val time = remember(row.timestamp) { runCatching { DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.parse(row.timestamp)) }.getOrDefault("") }
-            Text(time, style = MaterialTheme.typography.labelSmall, color = palette.foregroundExtraMuted)
+        else if (row.text.isNotBlank()) Row(Modifier.padding(top = 8.dp).height(24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val time = remember(row.timestamp) { runCatching { formatMessageTime(Instant.parse(row.timestamp).toEpochMilli()) }.getOrDefault("") }
+            Text(time, fontSize = 13.sp, color = palette.foregroundMuted)
             val modes = listOf("conversation" to "回退对话", "files" to "回退文件", "both" to "回退对话和文件").filter { (mode, _) ->
                 agent.capabilities.bool(when (mode) { "conversation" -> "supportsRewindConversation"; "files" -> "supportsRewindFiles"; else -> "supportsRewindBoth" }) }
             if (row.messageId.isNotBlank() && modes.isNotEmpty()) Box {
-                IconButton(onClick = { rewindMenu = true }, enabled = connected, modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Undo2, "回退到这条消息", Modifier.size(16.dp)) }
+                IconButton(onClick = { rewindMenu = true }, enabled = connected, modifier = Modifier.size(22.dp)) { PaseoGlyph(PaseoIcons.Undo2, "回退到这条消息", Modifier.size(14.dp)) }
                 DropdownMenu(rewindMenu, { rewindMenu = false }) {
                     modes.forEach { (mode, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { rewindMenu = false; onRewind(mode) }) }
                 }
             }
-            MessageCopyButton(row.text)
+            MessageCopyButton(row.text, modifier = Modifier.layout { measurable, constraints ->
+                val child = measurable.measure(constraints)
+                layout((child.width - 4.dp.roundToPx()).coerceAtLeast(0), child.height) { child.placeRelative(0, 0) }
+            })
         }
     }
 }
 
 @Composable
-fun MessageCopyButton(text: String) {
+fun MessageCopyButton(text: String, modifier: Modifier = Modifier, label: String = "复制消息") {
     val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
-    IconButton(onClick = { clipboard.setText(AnnotatedString(text)); copied = true }, modifier = Modifier.size(32.dp)) {
-        PaseoGlyph(if (copied) PaseoIcons.Check else PaseoIcons.Copy, if (copied) "已复制" else "复制消息", Modifier.size(16.dp), LocalPaseoPalette.current.foregroundMuted)
+    var copied by remember(text) { mutableStateOf(false) }
+    var copyVersion by remember(text) { mutableIntStateOf(0) }
+    // A repeated tap restarts the official 1.5-second checkmark feedback.
+    LaunchedEffect(copyVersion) { if (copyVersion > 0) { kotlinx.coroutines.delay(1500); copied = false } }
+    Box(modifier.size(22.dp).clickable(role = Role.Button) {
+        if (text.isNotEmpty()) { clipboard.setText(AnnotatedString(text)); copied = true; copyVersion++ }
+    }, contentAlignment = Alignment.Center) {
+        PaseoGlyph(if (copied) PaseoIcons.Check else PaseoIcons.Copy, if (copied) "已复制" else label, Modifier.size(14.dp), LocalPaseoPalette.current.foregroundMuted)
     }
 }
 

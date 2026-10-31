@@ -37,7 +37,8 @@ fun PaseoTheme(preference: ThemePreference = ThemePreference.AUTO, content: @Com
     val selection = remember(palette) { TextSelectionColors(palette.accentBright, palette.accentBright.copy(alpha = .25f)) }
     CompositionLocalProvider(LocalPaseoPalette provides palette) {
         MaterialTheme(colorScheme = colors) {
-            CompositionLocalProvider(LocalTextSelectionColors provides selection, content = content)
+            CompositionLocalProvider(LocalTextSelectionColors provides selection,
+                LocalContentColor provides palette.foreground, content = content)
         }
     }
 }

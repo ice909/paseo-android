@@ -20,6 +20,13 @@ class ConversationPresentationTest {
         val next = TimelineRow("u2", "user_message", "Next")
         assertEquals(listOf("u", "summary:u", "a2", "u2"), conversationPresentation(rows + next, true, emptySet()).map { it.key })
     }
+    @Test fun steeringMessagesRemainVisibleWhenTheirCanonicalTurnCollapses() {
+        val sameTurn = listOf(TimelineRow("u", "user_message", turnId = "turn"),
+            TimelineRow("t", "tool_call", title = "shell", turnId = "turn"),
+            TimelineRow("steer", "user_message", "Also check tests", turnId = "turn"),
+            TimelineRow("reply", "assistant_message", "Done", turnId = "turn"))
+        assertEquals(listOf("u", "summary:u", "steer", "reply"), conversationPresentation(sameTurn, false, emptySet()).map { it.key })
+    }
     @Test fun forgeAttachmentsFollowServerVersionAndKeepReviewContext() {
         val issue = jsonObject("kind" to "issue", "number" to 42, "title" to "Fix", "url" to "https://example.test/issues/42", "body" to "Details", "projectPath" to "team/project", "forge" to "gitlab")
         assertEquals("forge_issue", forgeAttachment(issue, true).payload!!.string("type"))

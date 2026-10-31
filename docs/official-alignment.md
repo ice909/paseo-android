@@ -74,3 +74,23 @@
 
 
 本轮回归包括 44 项核心测试（另有 1 项需要真实 daemon 环境的集成测试未在本轮运行）、16 项 Android 单元测试、Lint 和压缩 APK 构建。核心测试使用官方 relay 库验证 protected / legacy 二进制上传互通。Android 17 模拟器验证普通发送、steer、长按排队、队列编辑与自动续发、失败后的原 ID 重试、审批阻塞时的 interrupt、补全、编辑器展开、Issue 附件、麦克风权限、转写、语音静音 / 播放确认、跨代理草稿和进程死亡后的 outbox 恢复。文件与图片选择器、预览和发送内容使用 SHA-256 对照原始字节。模拟服务不执行真实 AI 或 shell。
+
+## 聊天标题栏与模型设置
+
+对照 `components/headers/compact-header.tsx`、`screens/workspace/compact-workspace-header/`、`components/floating-header/index.tsx` 与 `components/ui/edge-fade.tsx`：标题栏保留工作区标题和项目副标题，标签数量按钮打开代理 / 终端列表，工作区菜单和文件入口位于同一行。聊天时间线从标题栏背后滚动，渐变使用 `surfaceWorkspace` 同色的透明度变化，前 57% 实色、底部 48dp 延伸区域渐隐；不是对文字或整个页面做 blur。展开编辑器时隐藏标题栏，保留系统安全区域。
+
+对照 `composer/agent-controls/utils.ts`、`index.tsx` 和 `model-sheet.tsx`：手机 composer 用单个“模型＋思考强度”入口打开设置面板，面板包含模型、思考强度、权限模式以及主机声明的特性。模型解析保留别名、默认模型和运行时配置；未知模型不借用其他模型的推理能力，不支持思考强度时不显示该选项。更改使用对应 RPC，检查 `accepted` 回执，失败在面板内显示错误，最终值以主机快照为准。
+
+## 回复复制操作
+
+对照 `agent-stream/layout.ts`、`turn-footer.tsx`、`strategy.ts` 和 `components/message.tsx`：助手每轮仅在末尾显示一个复制入口，后续还有工具时放在工具之后；运行中的最新回合使用工作指示，历史已完成回合保留复制。复制范围按 canonical turn ID（旧历史退回触发消息边界）计算，包含折叠的助手 Markdown，以两个换行连接，不包含用户消息、工具输出或 reasoning。停止后使用已有回复恢复操作区，只有工具的回合显示时间而没有回复复制。
+
+复制图标为官方 14dp，按钮内边距 4dp；助手按钮与正文左沿对齐，用户按钮在气泡下方与时间、回退组成 24dp 高的操作行。点击复制后的勾选反馈为 1.5 秒，再次点击重新计时。完成回合默认显示耗时，点击可显示结束时间 3 秒；缺少开始时间时仅显示结束时间。Android 剪贴板与官方 native 分支一致，写入原始 Markdown 文本。
+
+## 侧栏与账户用量
+
+对照 `left-sidebar.tsx`、`sidebar-nav-rows.tsx`、`sidebar-workspace-row-content.tsx`、`project-icon-view.tsx`、`styles/identity-colors.ts` 和 `usage/`：保留原生侧栏 340dp 最大宽度，顶部使用新建 / 关闭 / 历史，项目标题使用官方色板与哈希生成首字母图标，支持 `project.list` 的主机优先使用共享 projectKey，旧主机使用 serverId / projectId 组合，工作区左侧显示状态点、运行圆环或等待输入标记，右侧显示上下文菜单。移除品牌标题和大面积主机状态行；底部为添加项目、用量、主机、帮助、设置入口。配色随当前主题，未强制切换成截图的 Dark 主题。
+
+用量默认显示已用百分比，按官方 `summary` 窗口选择；缺少百分比不按零处理。新版请求收集所有 `usage.list_reports.update` 后等待最终 response，按报告 ID 合并；旧主机回退 `provider.usage.list`。仅侧栏 / 用量面板打开时每分钟读取缓存，手动刷新才发送 forceRefresh；主机切换或断线清空上一主机额度，错误或未登录显示明确状态。详情可切换已用 / 剩余并查看窗口、计划和重置时间。历史入口使用真实 `fetch_agent_history_request` 搜索和分页，活动会话进入聊天，归档会话只读预览最近 200 条记录。
+
+本轮验证：73 项核心单元测试通过，4 项环境依赖测试跳过；20 项 Android 单元测试通过；Debug APK 编译与 Lint 通过。模拟主机覆盖新版分批用量、旧版接口、未登录状态、已用 / 剩余切换与刷新、项目元数据、侧栏宽度和状态位置、项目菜单、历史搜索 / 归档预览及 Dark / Light / Ghostty 截图。未连接用户的真实 Codex 账户验证额度数值。

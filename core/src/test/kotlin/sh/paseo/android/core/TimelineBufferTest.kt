@@ -27,6 +27,17 @@ class TimelineBufferTest {
         assertEquals("completed", buffer.rows().first().status)
         assertEquals("ok", buffer.rows().first().detail.string("output"))
     }
+    @Test fun toolErrorsAndMetadataSurviveHistoryAndLiveProjection() {
+        val buffer = TimelineBuffer()
+        val item = jsonObject("type" to "tool_call", "name" to "shell", "callId" to "c", "status" to "failed",
+            "error" to "permission denied", "metadata" to jsonObject("subAgentActivity" to "checking"))
+        buffer.append(event(1, item))
+        assertEquals("permission denied", toolDisplay(buffer.rows().single(), "").error)
+        buffer.hydrate(jsonObject("epoch" to "e1", "direction" to "tail", "window" to jsonObject("maxSeq" to 1),
+            "entries" to listOf(jsonObject("seqStart" to 1, "item" to item, "turnId" to "turn1"))))
+        assertEquals("permission denied", toolDisplay(buffer.rows().single(), "").error)
+        assertEquals("checking", buffer.rows().single().metadata.string("subAgentActivity"))
+    }
     @Test fun historySnapshotRetainsLaterLiveEvents() {
         val buffer = TimelineBuffer()
         buffer.append(event(3, text("!")))
