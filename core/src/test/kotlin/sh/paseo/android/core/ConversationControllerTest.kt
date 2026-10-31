@@ -58,6 +58,13 @@ class ConversationControllerTest {
         controller.setDraft(key, "later"); controller.send(key, alternate = true)
         assertEquals("later", controller.session(key).queue.single().draft.text)
     }
+    @Test fun forceQueueAlwaysQueuesWhileAgentIsRunning() = runTest {
+        val controller = ConversationController(this, { _, _, _ -> "accepted" }, {})
+        controller.behavior = SendBehavior.Queue
+        controller.update(snapshot(true, listOf(PermissionRequest("p"))))
+        controller.setDraft(key, "later"); controller.send(key, forceQueue = true)
+        assertEquals("later", controller.session(key).queue.single().draft.text)
+    }
     @Test fun editingQueueRestoresAttachmentsAndPreservesUnsentDraft() = runTest {
         val controller = ConversationController(this, { _, _, _ -> "accepted" }, {})
         controller.update(snapshot(true))

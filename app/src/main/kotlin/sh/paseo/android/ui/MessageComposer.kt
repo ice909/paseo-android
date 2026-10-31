@@ -36,6 +36,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
     returnIcon: Boolean = false, running: Boolean = false, onStop: () -> Unit = {}, sendDescription: String = "发送消息",
     modifier: Modifier = Modifier, expanded: Boolean = false, onExpand: (() -> Unit)? = null,
     onAlternateSend: (() -> Unit)? = null, behavior: SendBehavior = SendBehavior.Steer, modEnter: Boolean = false,
+    onQueueSend: (() -> Unit)? = null,
     cancelling: Boolean = false, hasAttachments: Boolean = false, submitOnEnter: Boolean = false,
     onReceiveFiles: ((List<android.net.Uri>) -> Unit)? = null, readSentMessages: (() -> List<String>)? = null, cursorRequest: Pair<String, Int>? = null, onSelection: (Int) -> Unit = {}, trailingControls: @Composable () -> Unit = {}, attachments: @Composable () -> Unit = {},
     scrollOptions: Boolean = true, options: @Composable RowScope.() -> Unit) {
@@ -59,6 +60,7 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
     var recallIndex by remember { mutableIntStateOf(-1) }
     var recalled by remember { mutableStateOf("") }
     var renderedLines by remember { mutableIntStateOf(1) }
+    var sendMenuOpen by remember { mutableStateOf(false) }
     if (value != lastValue) {
         editor = TextFieldValue(value, TextRange((cursorRequest?.takeIf { it.first == value }?.second ?: value.length).coerceIn(0, value.length)))
         lastValue = value
@@ -76,12 +78,12 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
         border = BorderStroke(1.dp, palette.borderAccent)) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).then(if (expanded) Modifier.fillMaxHeight() else Modifier), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             attachments()
-            Box(Modifier.fillMaxWidth().then(if (expanded) Modifier.weight(1f) else Modifier).padding(end = 36.dp)) {
+            Box(Modifier.fillMaxWidth().then(if (expanded) Modifier.weight(1f) else Modifier.heightIn(min = 34.dp)).padding(end = 36.dp)) {
                 BasicTextField(editor, { edit(it) }, enabled = enabled, maxLines = if (expanded) Int.MAX_VALUE else 6,
                     textStyle = PaseoUiText.copy(color = palette.foreground), onTextLayout = { renderedLines = it.lineCount },
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default),
                     cursorBrush = SolidColor(palette.accent), modifier = Modifier.fillMaxWidth()
-                        .then(if (expanded) Modifier.fillMaxHeight() else Modifier.heightIn(min = 30.dp, max = 160.dp))
+                        .then(if (expanded) Modifier.fillMaxHeight() else Modifier.heightIn(min = 30.dp, max = 160.dp).align(Alignment.CenterStart))
                         .then(if (onReceiveFiles != null) Modifier.contentReceiver(receiver) else Modifier)
                         .semantics { contentDescription = "消息输入框" }
                         .onPreviewKeyEvent { event ->
@@ -128,16 +130,21 @@ fun MessageComposer(value: String, onValueChange: (String) -> Unit, placeholder:
                 Spacer(Modifier.width(4.dp))
                 val active = canSend && (!sending || stop) && !cancelling
                 val label = if (stop) "停止生成" else if (queue) "加入队列" else sendDescription
-                val alternateLabel = if (queue) "立即发送" else "加入队列"
-                Box(Modifier.size(28.dp).clip(CircleShape)
-                    .background(if (active) palette.accent else palette.surface2)
-                    .combinedClickable(enabled = active, role = Role.Button,
-                        onClick = { if (stop) onStop() else onSend() },
-                        onLongClickLabel = if (running && !stop && onAlternateSend != null) alternateLabel else null,
-                        onLongClick = if (running && !stop && onAlternateSend != null) onAlternateSend else null)
-                    .semantics { contentDescription = label; if (!active) disabled() }, contentAlignment = Alignment.Center) {
-                    if (sending && !stop || cancelling) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = palette.accentForeground)
-                    else PaseoGlyph(when { stop -> PaseoIcons.SquareFilled; returnIcon -> PaseoIcons.CornerDownLeft; else -> PaseoIcons.ArrowUp }, modifier = Modifier.size(20.dp), tint = if (active) palette.accentForeground else palette.foregroundExtraMuted)
+                Box {
+                    Box(Modifier.size(28.dp).clip(CircleShape)
+                        .background(if (active) palette.accent else palette.surface2)
+                        .combinedClickable(enabled = active, role = Role.Button,
+                            onClick = { if (stop) onStop() else onSend() },
+                            onLongClickLabel = if (running && !stop && onQueueSend != null) "选择发送方式" else null,
+                            onLongClick = if (running && !stop && onQueueSend != null) ({ sendMenuOpen = true }) else null)
+                        .semantics { contentDescription = label; if (!active) disabled() }, contentAlignment = Alignment.Center) {
+                        if (sending && !stop || cancelling) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = palette.accentForeground)
+                        else PaseoGlyph(when { stop -> PaseoIcons.SquareFilled; returnIcon -> PaseoIcons.CornerDownLeft; else -> PaseoIcons.ArrowUp }, modifier = Modifier.size(if (stop) 14.dp else 20.dp), tint = if (active) palette.accentForeground else palette.foregroundExtraMuted)
+                    }
+                    PaseoDropdownMenu(sendMenuOpen, { sendMenuOpen = false }) {
+                        DropdownMenuItem(text = { Text("按默认模式发送") }, onClick = { sendMenuOpen = false; onSend() })
+                        DropdownMenuItem(text = { Text("排队发送") }, onClick = { sendMenuOpen = false; onQueueSend?.invoke() })
+                    }
                 }
             }
         }

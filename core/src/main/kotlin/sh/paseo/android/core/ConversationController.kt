@@ -105,12 +105,12 @@ class ConversationController(
     }
     private fun agent(key: ConversationKey): Agent? = snapshot.agents.find { snapshot.host?.id == key.hostId && it.id == key.agentId }
     private fun connected(key: ConversationKey) = snapshot.connected && snapshot.host?.id == key.hostId
-    fun send(key: ConversationKey, alternate: Boolean = false) {
+    fun send(key: ConversationKey, alternate: Boolean = false, forceQueue: Boolean = false) {
         val current = session(key)
         val agent = agent(key) ?: return
         if (!connected(key) || current.sending || current.draft.empty) return
         val activeBehavior = if (behavior == SendBehavior.Queue && agent.pendingPermissions.isNotEmpty()) SendBehavior.Interrupt else behavior
-        val queue = agent.running && (if (alternate) activeBehavior != SendBehavior.Queue else activeBehavior == SendBehavior.Queue)
+        val queue = agent.running && (forceQueue || (if (alternate) activeBehavior != SendBehavior.Queue else activeBehavior == SendBehavior.Queue))
         val draft = current.draft.copy(text = current.draft.text.trim())
         val failed = current.failed?.takeIf { it.draft == draft }
         val message = failed?.copy(delivery = "sending") ?: OutgoingMessage(draft = draft,

@@ -63,7 +63,7 @@
 
 对照同一官方提交的 `composer/{submit,actions,input/state}.ts`、`runtime/host-runtime.ts`、`components/message.tsx`、`components/rewind/` 和 `voice/voice-runtime.ts`：
 
-- `ConversationController` 以主机 ID 和代理 ID 为键管理草稿、发送、取消、错误、乐观消息和 FIFO 队列。默认发送 `activeTurnBehavior: steer`；可选择 interrupt 或 queue，运行中长按发送执行相反行为。queue 偏好遇到待审批请求时改为 interrupt，避免把回答排在被审批阻塞的任务后面。
+- `ConversationController` 以主机 ID 和代理 ID 为键管理草稿、发送、取消、错误、乐观消息和 FIFO 队列。默认发送 `activeTurnBehavior: steer`；可选择 interrupt 或 queue，运行中长按发送可明确选择默认模式或排队。队列按官方 composer queue row 使用独立卡片、编辑和立即发送操作；代理转为空闲时只发送下一项。queue 偏好遇到待审批请求时改为 interrupt，避免把回答排在被审批阻塞的任务后面。
 - 发送立即清空草稿。失败恢复文本与附件，保留等待回执期间新输入的内容；重试使用同一 messageId。已收到 canonical echo 时，以时间线确认收件，避免丢回执导致重复恢复。队列可编辑、立即发送，代理转为空闲时只发送下一项；失败退回队首，不循环重试。队列与官方一样保存在运行时内存中。
 - `ChatStore` 用独立 Keystore 密钥加密保存草稿、未确认发送记录及本机已发送附件引用；发出网络请求前先落盘 outbox，进程重启后先与 canonical 历史对账，仍未确认的记录可以编辑或用原 messageId 重试。切换代理和主机不串草稿。编辑器展开保留输入，手机回车换行，支持 / 命令与 @ 文件建议（选择后使用官方的双引号路径格式）。
 - 模型、模式、思考强度及 daemon 声明的 toggle/select 特性使用对应 RPC，并在请求期间禁用重复切换。停止按钮在回合结束前保持取消状态；审批提交后等待主机解决事件，避免重复提交。
@@ -79,7 +79,7 @@
 
 ## 聊天标题栏与模型设置
 
-对照 `components/headers/compact-header.tsx`、`screens/workspace/compact-workspace-header/`、`components/floating-header/index.tsx` 与 `components/ui/edge-fade.tsx`：标题栏保留工作区标题和项目副标题，标签数量按钮打开代理 / 终端列表，工作区菜单和文件入口位于同一行。聊天时间线从标题栏背后滚动，渐变使用 `surfaceWorkspace` 同色的透明度变化，前 57% 实色、底部 48dp 延伸区域渐隐；不是对文字或整个页面做 blur。展开编辑器时隐藏标题栏，保留系统安全区域。
+对照 `components/headers/compact-header.tsx`、`screens/workspace/compact-workspace-header/`、`screens/workspace/workspace-header-project-row.tsx`、`components/floating-header/index.tsx` 与 `components/ui/edge-fade.tsx`：标题栏紧凑显示工作区标题、项目名、主机和连接状态；标签数量按钮打开代理 / 终端列表，工作区菜单和文件入口位于同一行。聊天时间线从标题栏背后滚动，渐变使用 `surfaceWorkspace` 同色的透明度变化，前 57% 实色、底部 48dp 延伸区域渐隐；不是对文字或整个页面做 blur。展开编辑器时隐藏标题栏，保留系统安全区域。
 
 对照 `composer/agent-controls/utils.ts`、`index.tsx` 和 `model-sheet.tsx`：手机 composer 用单个“模型＋思考强度”入口打开设置面板，面板包含模型、思考强度、权限模式以及主机声明的特性。模型解析保留别名、默认模型和运行时配置；未知模型不借用其他模型的推理能力，不支持思考强度时不显示该选项。更改使用对应 RPC，检查 `accepted` 回执，失败在面板内显示错误，最终值以主机快照为准。
 

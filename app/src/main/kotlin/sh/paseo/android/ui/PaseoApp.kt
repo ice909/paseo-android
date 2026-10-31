@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -119,13 +120,31 @@ fun PaseoApp(vm: AppViewModel) {
                         run {
                             Column(Modifier.weight(1f).padding(start = 2.dp)) {
                                 Text(if (screen == "appearance") "外观" else if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
-                                    style = MaterialTheme.typography.titleSmall.copy(fontSize = if (compactWorkspace) 14.sp else MaterialTheme.typography.titleSmall.fontSize, fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    style = MaterialTheme.typography.titleSmall.copy(fontSize = if (compactWorkspace) 14.sp else MaterialTheme.typography.titleSmall.fontSize,
+                                        lineHeight = if (compactWorkspace) 18.sp else MaterialTheme.typography.titleSmall.lineHeight,
+                                        fontWeight = FontWeight.Medium, platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (compactWorkspace && workspace != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(workspace.projectDisplayName, modifier = Modifier.weight(1f, fill = false), fontSize = 12.sp,
+                                    Text(workspace.projectDisplayName, modifier = Modifier.weight(1f), style = PaseoUiText.copy(fontSize = 12.sp,
+                                        lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
                                         color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (!state.connected) Text(connectionLabel(state.connection), fontSize = 11.sp,
-                                        color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1,
-                                        modifier = Modifier.clickable { state.host?.let(vm::connect) }.semantics { contentDescription = "${state.host?.displayName.orEmpty()}，${connectionLabel(state.connection)}，点击重连" })
+                                    state.host?.let { host ->
+                                        Text("·", style = PaseoUiText.copy(fontSize = 12.sp, lineHeight = 14.sp), color = LocalPaseoPalette.current.foregroundExtraMuted)
+                                        PaseoGlyph(PaseoIcons.Server, null, Modifier.size(12.dp), LocalPaseoPalette.current.foregroundMuted)
+                                        Text(host.displayName, modifier = Modifier.widthIn(max = 96.dp), style = PaseoUiText.copy(fontSize = 11.sp,
+                                            lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                                            color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Box(Modifier.size(6.dp).background(when (state.connection) {
+                                            ConnectionStatus.Connected -> LocalPaseoPalette.current.statusDotSuccess
+                                            ConnectionStatus.Connecting, ConnectionStatus.Reconnecting -> LocalPaseoPalette.current.statusDotWarning
+                                            ConnectionStatus.Disconnected -> LocalPaseoPalette.current.statusDotDanger
+                                        }, RoundedCornerShape(50)))
+                                        Text(connectionLabel(state.connection), style = PaseoUiText.copy(fontSize = 11.sp,
+                                            lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                                            color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1,
+                                            modifier = Modifier.clickable(enabled = !state.connected) { vm.connect(host) }
+                                                .semantics { contentDescription = "${host.displayName}，${connectionLabel(state.connection)}${if (state.connected) "" else "，点击重连"}" })
+                                    }
                                 }
                             }
                             if (screen == "hosts") IconButton(onClick = { openPairing(); showHostEditor = true }) { PaseoGlyph(PaseoIcons.Plus, "添加主机") }

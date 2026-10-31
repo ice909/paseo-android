@@ -10,10 +10,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Alignment
@@ -26,6 +28,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -174,12 +181,32 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
         if (agent.pendingPermissions.isNotEmpty() && !expanded) Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
             agent.pendingPermissions.forEach { request -> key(request.id) { PermissionCard(vm, agent.id, request, state.connected) } }
         }
-        if (session.queue.isNotEmpty() && !expanded) Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-            session.queue.forEach { message -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(message.draft.text.ifBlank { message.draft.attachments.joinToString { it.name } }, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                IconButton(onClick = { vm.conversations.editQueued(key, message.id) }, enabled = !session.sending, modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Pencil, "编辑排队消息", Modifier.size(16.dp)) }
-                FilledIconButton(onClick = { vm.conversations.sendQueued(key, message.id) }, enabled = state.connected && !session.sending, modifier = Modifier.size(28.dp)) { PaseoGlyph(PaseoIcons.ArrowUp, "立即发送排队消息", Modifier.size(16.dp)) }
-            } }
+        if (session.queue.isNotEmpty() && !expanded) Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            session.queue.forEach { message ->
+                Surface(shape = RoundedCornerShape(12.dp), color = LocalPaseoPalette.current.surface1,
+                    border = BorderStroke(1.dp, LocalPaseoPalette.current.border)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(message.draft.text.ifBlank { message.draft.attachments.joinToString { it.name } }, maxLines = 2,
+                            overflow = TextOverflow.Ellipsis, style = PaseoUiText.copy(fontSize = 14.sp),
+                            modifier = Modifier.weight(1f))
+                        Box(Modifier.size(32.dp).clip(CircleShape).background(LocalPaseoPalette.current.surface2)
+                            .clickable(enabled = !session.sending, role = Role.Button) { vm.conversations.editQueued(key, message.id) }
+                            .semantics { contentDescription = "编辑排队消息"; if (session.sending) disabled() },
+                            contentAlignment = Alignment.Center) {
+                            PaseoGlyph(PaseoIcons.Pencil, modifier = Modifier.size(16.dp), tint = LocalPaseoPalette.current.foregroundMuted)
+                        }
+                        Box(Modifier.size(32.dp).clip(CircleShape)
+                            .background(if (state.connected && !session.sending) LocalPaseoPalette.current.accent else LocalPaseoPalette.current.surface2)
+                            .clickable(enabled = state.connected && !session.sending, role = Role.Button) { vm.conversations.sendQueued(key, message.id) }
+                            .semantics { contentDescription = "立即发送排队消息"; if (!state.connected || session.sending) disabled() },
+                            contentAlignment = Alignment.Center) {
+                            PaseoGlyph(PaseoIcons.ArrowUp, modifier = Modifier.size(16.dp),
+                                tint = if (state.connected && !session.sending) LocalPaseoPalette.current.accentForeground else LocalPaseoPalette.current.foregroundExtraMuted)
+                        }
+                    }
+                }
+            }
         }
         session.error?.let { error -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
@@ -192,6 +219,7 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
         MessageComposer(session.draft.text, { vm.conversations.setDraft(key, it) }, "发送消息，/ 选择命令", enabled = audio.mode != "dictation", canSend = state.connected && !importing && (if (audio.mode == "dictation") audio.phase == "recording" else agent.running || !session.draft.empty),
             sending = session.sending || importing || audio.phase == "uploading", onSend = { following = true; if (audio.mode == "dictation") vm.audio.confirm(true) else vm.conversations.send(key) }, running = agent.running && audio.mode != "dictation",
             onStop = { vm.conversations.stop(key) }, onAlternateSend = { following = true; vm.conversations.send(key, alternate = true) },
+            onQueueSend = { following = true; vm.conversations.send(key, forceQueue = true) },
             behavior = activeBehavior, modEnter = modEnter, cancelling = session.cancelling, hasAttachments = session.draft.attachments.isNotEmpty(),
             expanded = expanded, onExpand = { onFullscreenChange(!expanded) }, modifier = if (expanded) Modifier.weight(1f) else Modifier,
             onReceiveFiles = { vm.attachFiles(key, it) }, readSentMessages = { rows.asReversed().filter { it.type == "user_message" && it.text.isNotBlank() }.map { it.text } }, cursorRequest = cursorRequest, onSelection = { cursor = it },
