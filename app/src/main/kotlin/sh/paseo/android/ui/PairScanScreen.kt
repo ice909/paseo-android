@@ -77,7 +77,7 @@ fun PairScanScreen(vm: AppViewModel, onBack: () -> Unit) {
             Text("扫描二维码", style = PaseoUiText, fontWeight = FontWeight.Medium, color = p.foreground)
         }
         Column(Modifier.weight(1f).padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-            if (!granted) Column(Modifier.padding(top = 24.dp).fillMaxWidth().background(p.surface2, RoundedCornerShape(12.dp)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (!granted) Column(Modifier.padding(top = 24.dp).fillMaxWidth().background(p.surface2, RoundedCornerShape(16.dp)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("相机权限", style = PaseoUiText, fontWeight = FontWeight.SemiBold, color = p.foreground)
                 Text("允许相机访问，以扫描 daemon 提供的配对二维码。", style = PaseoUiText, color = p.foregroundMuted)
                 Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF3B82F6)).clickable(role = Role.Button) {
@@ -87,7 +87,7 @@ fun PairScanScreen(vm: AppViewModel, onBack: () -> Unit) {
                 }.padding(horizontal = 24.dp, vertical = 12.dp)) {
                     Text("授予权限", style = PaseoUiText, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
-            } else Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(p.surface2)) {
+            } else Box(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(p.surface2)) {
                 CameraQrPreview(cameraAttempt, paused || busy || needsPassword, { raw ->
                     if (!paused && !busy) {
                         paused = true; link = raw
@@ -97,8 +97,14 @@ fun PairScanScreen(vm: AppViewModel, onBack: () -> Unit) {
                 }, { cameraError = it; paused = true })
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     ScanFrame()
-                    if (busy) Text("正在配对...", Modifier.padding(top = 24.dp), style = PaseoUiText, color = p.foreground)
-                    (cameraError ?: error)?.let { Text(it, Modifier.padding(top = 24.dp, start = 16.dp, end = 16.dp), style = PaseoUiText, color = p.foreground) }
+                    val status = when {
+                        busy -> "正在配对..."
+                        else -> cameraError ?: error
+                    }
+                    status?.let {
+                        Text(it, Modifier.padding(top = 24.dp, start = 16.dp, end = 16.dp),
+                            style = PaseoUiText, color = p.foreground, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
                     if (paused && !busy && !needsPassword) PaseoButton("扫描二维码", ::retry, Modifier.padding(top = 24.dp))
                 }
             }

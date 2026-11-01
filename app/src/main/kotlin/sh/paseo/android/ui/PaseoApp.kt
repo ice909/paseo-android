@@ -67,15 +67,17 @@ fun PaseoApp(vm: AppViewModel) {
     var editingHostId by rememberSaveable { mutableStateOf<String?>(null) }
     val editingHost = hosts.find { it.id == editingHostId }
     var directPairing by rememberSaveable { mutableStateOf(false) }
+    var choosePairingMethod by rememberSaveable { mutableStateOf(false) }
     val welcome = screen == "hosts" && hosts.isEmpty()
     fun openAppearance() {
         appearanceReturnScreen = screen
         vm.navigate("appearance")
         scope.launch { drawer.close() }
     }
-    fun openPairing(direct: Boolean = false) {
+    fun openPairing(direct: Boolean = false, chooseMethod: Boolean = false) {
         editingHostId = null
         directPairing = direct
+        choosePairingMethod = chooseMethod
     }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -169,7 +171,7 @@ fun PaseoApp(vm: AppViewModel) {
                                     }
                                 }
                             }
-                            if (screen == "hosts") IconButton(onClick = { openPairing(); showHostEditor = true }) { PaseoGlyph(PaseoIcons.Plus, "添加主机") }
+                            if (screen == "hosts") IconButton(onClick = { openPairing(chooseMethod = true); showHostEditor = true }) { PaseoGlyph(PaseoIcons.Plus, "添加主机") }
                             if (compactWorkspace && workspace != null) {
                                 IconButton(onClick = { picker = true }, modifier = Modifier.size(32.dp).semantics { contentDescription = "切换代理或终端" }) {
                                     Box(Modifier.sizeIn(minWidth = 16.dp).height(16.dp).border(1.dp, LocalPaseoPalette.current.foregroundMuted, RoundedCornerShape(3.dp)).padding(horizontal = 2.dp), contentAlignment = Alignment.Center) {
@@ -217,7 +219,7 @@ fun PaseoApp(vm: AppViewModel) {
                         onDirect = { openPairing(direct = true); showHostEditor = true },
                         onPasteLink = { openPairing(); showHostEditor = true },
                         onSettings = ::openAppearance)
-                    screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { openPairing(); showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
+                    screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { openPairing(chooseMethod = true); showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
                     screen == "chat" && workspace != null && !createAgent -> if (terminal) TerminalPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else ChatScreen(vm, state, snackbar, onCreateAgent = { createAgent = true }, topOverlayInset = topOverlayInset, expanded = composerFullscreen, onFullscreenChange = { composerFullscreen = it })
                     else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject, onManageHosts = { navigate("hosts") }) { launchTerminal -> createAgent = false; terminal = launchTerminal }
                 } }
@@ -263,7 +265,9 @@ fun PaseoApp(vm: AppViewModel) {
     }
     if (showHostEditor) {
         if (editingHost != null) HostEditor(vm, editingHost) { showHostEditor = false }
-        else PairingSheet(vm, direct = directPairing, onDismiss = { showHostEditor = false })
+        else PairingSheet(vm, direct = directPairing, chooseMethod = choosePairingMethod,
+            onScanQr = { showHostEditor = false; vm.navigate("scan") },
+            onDismiss = { choosePairingMethod = false; showHostEditor = false })
     }
     val availableUpdate = previewUpdate.update
     if (availableUpdate != null && dismissedUpdateVersion != availableUpdate.versionCode) AlertDialog(
