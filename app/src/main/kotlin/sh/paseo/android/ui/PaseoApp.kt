@@ -121,7 +121,7 @@ fun PaseoApp(
             vm.repository.clearError()
         }
     }
-    BackHandler(drawer.isOpen || screen == "scan" || screen == "appearance" || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
+    BackHandler(drawer.isOpen || screen == "scan" || screen == "appearance" || explorer || createAgent || (screen == "hosts" && state.host != null)) {
         when {
             drawer.isOpen -> scope.launch { drawer.close() }
             screen == "scan" -> { vm.cancelPairing(); vm.navigate("hosts") }
