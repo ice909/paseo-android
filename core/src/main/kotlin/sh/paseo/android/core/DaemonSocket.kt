@@ -36,6 +36,7 @@ class DaemonSocket(
     val messages = incoming.receiveAsFlow().filter { it.first == generation.get() }.map { it.second }
     private val _connected = MutableStateFlow(false)
     val connected = _connected.asStateFlow()
+    private var pendingPong: CompletableDeferred<Unit>? = null
     private var socket: WebSocket? = null
     private var secure: RelayChannel? = null
     private var retryHandshake: Job? = null
@@ -74,6 +75,7 @@ class DaemonSocket(
             val frame = wireJson.parseToJsonElement(text).jsonObject
             when (frame.string("type")) {
                 "ping" -> transmit(peer, jsonObject("type" to "pong").toString())
+                "pong" -> pendingPong?.complete(Unit)
                 "hello.rejected" -> {
                     val error = when (frame.string("reason")) {
                         "password_required" -> AuthenticationException("主机需要密码", AuthFailure.PasswordRequired)
@@ -168,6 +170,29 @@ class DaemonSocket(
         })
         return try { withTimeout(timeoutMs) { ready.await() } }
         catch (error: Exception) { disconnect(); throw error }
+    }
+
+    suspend fun ping(timeoutMs: Long = 3_000, expectedGeneration: Long? = null) {
+        val result = synchronized(outbound) {
+            check(_connected.value) { "主机未连接" }
+            check(expectedGeneration == null || expectedGeneration == generation.get()) { "主机连接已改变" }
+            pendingPong ?: CompletableDeferred<Unit>().also { pending ->
+                pendingPong = pending
+                try {
+                    val text = jsonObject("type" to "ping").toString()
+                    check(socket?.send(secure?.encrypt(text) ?: text) == true) { "连接已断开" }
+                } catch (error: Exception) {
+                    pendingPong = null
+                    pending.completeExceptionally(error)
+                    throw error
+                }
+            }
+        }
+        try {
+            withTimeout(timeoutMs) { result.await() }
+        } finally {
+            synchronized(outbound) { if (pendingPong === result) pendingPong = null }
+        }
     }
 
     suspend fun request(type: String, vararg fields: Pair<String, Any?>, expectedGeneration: Long? = null, onUpdate: ((JsonObject) -> Unit)? = null): JsonObject {
@@ -277,6 +302,8 @@ class DaemonSocket(
     }
     private fun fail(error: Exception) {
         _connected.value = false
+        pendingPong?.completeExceptionally(error)
+        pendingPong = null
         handshake?.completeExceptionally(error)
         pending.values.forEach { it.completeExceptionally(error) }
         pending.clear()

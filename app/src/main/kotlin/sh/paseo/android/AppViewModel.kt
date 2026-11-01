@@ -40,6 +40,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val creating = MutableStateFlow(false)
     val localNetworkPermissionRequest = MutableStateFlow<Host?>(null)
     private var connectionRequestJob: Job? = null
+    private var foregroundVerificationJob: Job? = null
     private var navigationRevision = 0L
     private var networkPermissionResult: CompletableDeferred<Boolean>? = null
     private var pairingJob: Job? = null
@@ -225,10 +226,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun onAppForegrounded() {
         val current = state.value
         val host = current.host?.let { active -> hosts.value.find { it.id == active.id } ?: active } ?: return
-        if (current.connection != ConnectionStatus.Reconnecting) return
         val restore = workspaceSelectionStore.selection?.takeIf { it.hostId == host.id }
             ?: current.restoringWorkspace?.takeIf { it.hostId == host.id }
-        repository.connect(host, restore)
+        when (current.connection) {
+            ConnectionStatus.Reconnecting -> {
+                foregroundVerificationJob?.cancel()
+                repository.connect(host, restore)
+            }
+            ConnectionStatus.Connected -> {
+                if (foregroundVerificationJob?.isActive != true) {
+                    foregroundVerificationJob = viewModelScope.launch { repository.verifyConnection() }
+                }
+            }
+            else -> Unit
+        }
     }
     fun connectWorkspaceHost(host: Host) = connectTo(host, "new")
     private fun cancelPendingNavigation() {
@@ -242,6 +253,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun connectTo(host: Host, destination: String, restore: WorkspaceSelection? = null) {
         cancelPendingNavigation()
+        foregroundVerificationJob?.cancel()
         val revision = navigationRevision
         connectionRequestJob = action {
             if (networkAccess(host)) {

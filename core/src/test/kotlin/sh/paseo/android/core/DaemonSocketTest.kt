@@ -52,6 +52,45 @@ class DaemonSocketTest {
             assertFalse(socket.connected.value)
         } finally { socket.close(); server.close() }
     }
+    @Test fun sendsApplicationPing() = runBlocking {
+        val receivedPing = CompletableDeferred<Unit>()
+        val server = MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val frame = wireJson.parseToJsonElement(text).jsonObject
+                if (frame.string("type") == "hello") {
+                    webSocket.send(session("status", jsonObject("status" to "server_info", "serverId" to "test")))
+                } else if (frame.string("type") == "ping") {
+                    receivedPing.complete(Unit)
+                    webSocket.send(jsonObject("type" to "pong").toString())
+                }
+            }
+        }))
+        val socket = DaemonSocket()
+        try {
+            socket.open(Host(name = "test", url = server.url("/ws").toString()))
+            socket.ping()
+            withTimeout(3_000) { receivedPing.await() }
+        } finally { socket.close(); server.close() }
+    }
+    @Test fun timesOutWhenApplicationPongIsMissing() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (wireJson.parseToJsonElement(text).jsonObject.string("type") == "hello")
+                    webSocket.send(session("status", jsonObject("status" to "server_info", "serverId" to "test")))
+            }
+        }))
+        val socket = DaemonSocket()
+        try {
+            socket.open(Host(name = "test", url = server.url("/ws").toString()))
+            val error = runCatching { socket.ping(timeoutMs = 50) }.exceptionOrNull()
+            assertTrue(error is TimeoutCancellationException)
+            assertTrue(socket.connected.value)
+        } finally { socket.close(); server.close() }
+    }
     @Test fun releasesSubscriptionAllocatedAfterCallerCancellation() = runBlocking {
         val server = MockWebServer()
         val requested = CompletableDeferred<JsonObject>()
