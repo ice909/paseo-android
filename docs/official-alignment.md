@@ -11,6 +11,7 @@
 | 用户消息块、助手正文、可展开工具行、停止 | `ChatScreen.kt`、`Markdown.kt` | 官方聊天和 composer 组件 |
 | 单选、多选、自定义回答 | `QuestionForm.kt`（app/core） | `components/question-form-card-core.ts` |
 | 改动 / 文件切换与文件编辑 | `WorkspacePanes.kt` | 官方 workspace explorer |
+| 侧栏主机入口、主机概览及主机分区导航 | `PaseoApp.kt`、`HostSettingsScreen.kt` | `components/left-sidebar.tsx`、`settings-screen.tsx`、`screens/settings/host-page.tsx` |
 
 深色配色按官方语义层级使用：Dark 页面底色 `surface0=#181B1A`，聊天工作区 `surface1=#1E2120`，代码块与行内代码 `surface2=#272A29`，用户气泡 `surface3=#434645`；正文 `foreground=#FAFAFA`、次要文字 `foregroundMuted=#A1A5A4`，composer 占位文字使用 `surface4=#595B5B`。Compose 禁用 Material 色调叠加，菜单统一使用 `surface1` 与 `borderAccent`，移动端面板外壳使用 `surface0`，模型面板内容使用 `surfaceSidebar`，列表行继承所在面板背景。文件面板及其文件行使用 `surfaceSidebar=#141716`；启动窗口的静态回退底色使用 Dark 的 `surface0`，Activity 创建后按已保存主题立即更新。Markdown 引用使用 80% 正文色，选区沿用官方终端选区的白色 20% / 黑色 15%（深色 / 浅色）；其他主题使用同名语义色。
 
@@ -103,3 +104,7 @@
 用量默认显示已用百分比，按官方 `summary` 窗口选择；缺少百分比不按零处理。新版请求收集所有 `usage.list_reports.update` 后等待最终 response，按报告 ID 合并；旧主机回退 `provider.usage.list`。仅侧栏 / 用量面板打开时每分钟读取缓存，手动刷新才发送 forceRefresh；主机切换或断线清空上一主机额度，错误或未登录显示明确状态。详情可切换已用 / 剩余并查看窗口、计划和重置时间。历史入口使用真实 `fetch_agent_history_request` 搜索和分页，活动会话进入聊天，归档会话只读预览最近 200 条记录。
 
 本轮验证：73 项核心单元测试通过，4 项环境依赖测试跳过；20 项 Android 单元测试通过；Debug APK 编译与 Lint 通过。模拟主机覆盖新版分批用量、旧版接口、未登录状态、已用 / 剩余切换与刷新、项目元数据、侧栏宽度和状态位置、项目菜单、历史搜索 / 归档预览及 Dark / Light / Ghostty 截图。未连接用户的真实 Codex 账户验证额度数值。
+
+## 主机设置导航（0.7.0）
+
+对照官方 `SidebarHostPicker`、`SettingsSidebar`、`HostSettingsPage` 与 `HOST_SECTION_ITEMS`：侧栏主机入口先显示已保存主机选择器，选择主机后打开概览，而不是把主机列表页当作设置页；概览显示连接状态、当前连接路径、连接地址、编辑和移除操作，并可进入项目、连接、配对设备、代理、元数据、语音、工作区、提供商、用量、终端和插件分区。可从标题栏切换已保存主机或添加新主机。尚未移植的 daemon 配置分区会明确说明 Android 暂不支持，不提供无效开关；主机配对编辑、项目 / 工作区只读信息与全局外观入口复用已有原生能力。

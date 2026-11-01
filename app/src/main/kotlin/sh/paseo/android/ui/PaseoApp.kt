@@ -37,7 +37,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import sh.paseo.android.R
 import sh.paseo.android.AppViewModel
 import sh.paseo.android.core.*
 
@@ -64,8 +63,13 @@ fun PaseoApp(vm: AppViewModel) {
     val scope = rememberCoroutineScope()
     val theme by vm.theme.collectAsStateWithLifecycle()
     var appearanceReturnScreen by rememberSaveable { mutableStateOf("hosts") }
+    var hostSettingsReturnScreen by rememberSaveable { mutableStateOf("chat") }
+    var hostSettingsHostId by rememberSaveable { mutableStateOf<String?>(null) }
+    var hostSettingsSection by rememberSaveable { mutableStateOf("host") }
+    var hostPickerOpen by rememberSaveable { mutableStateOf(false) }
     var editingHostId by rememberSaveable { mutableStateOf<String?>(null) }
     val editingHost = hosts.find { it.id == editingHostId }
+    val hostSettingsHost = hosts.find { it.id == hostSettingsHostId }
     var directPairing by rememberSaveable { mutableStateOf(false) }
     var choosePairingMethod by rememberSaveable { mutableStateOf(false) }
     val welcome = screen == "hosts" && hosts.isEmpty()
@@ -98,6 +102,12 @@ fun PaseoApp(vm: AppViewModel) {
         vm.navigate(destination)
         explorer = false; createAgent = false
     }
+    fun openHostSettings(host: Host) {
+        hostSettingsReturnScreen = screen
+        hostSettingsHostId = host.id
+        hostSettingsSection = "host"
+        navigate("host-settings")
+    }
     LaunchedEffect(screen, state.restoringWorkspace, state.selectedWorkspaceId, state.workspaceAgents.map { it.id }, state.selectedAgentId, terminal, createAgent) {
         if (screen == "chat" && state.restoringWorkspace == null && !terminal && !createAgent && state.selectedAgentId == null) state.workspaceAgents.firstOrNull()?.let(vm::openAgent)
     }
@@ -111,11 +121,13 @@ fun PaseoApp(vm: AppViewModel) {
             vm.repository.clearError()
         }
     }
-    BackHandler(drawer.isOpen || screen == "scan" || screen == "appearance" || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
+    BackHandler(drawer.isOpen || screen == "scan" || screen == "appearance" || screen == "host-settings" || explorer || createAgent || screen == "chat" || (screen == "hosts" && state.host != null)) {
         when {
             drawer.isOpen -> scope.launch { drawer.close() }
             screen == "scan" -> { vm.cancelPairing(); vm.navigate("hosts") }
             screen == "appearance" -> vm.navigate(appearanceReturnScreen)
+            screen == "host-settings" && hostSettingsSection != "host" -> hostSettingsSection = "host"
+            screen == "host-settings" -> vm.navigate(hostSettingsReturnScreen)
             explorer -> explorer = false
             createAgent -> createAgent = false
             else -> { vm.backToSessions(); terminal = false }
@@ -125,7 +137,13 @@ fun PaseoApp(vm: AppViewModel) {
         ModalDrawerSheet(drawerContainerColor = sidebarColor(), drawerContentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.widthIn(max = 340.dp).fillMaxHeight()) {
             WorkspaceSidebar(vm, state, active = drawer.isOpen, onClose = { scope.launch { drawer.close() } }, onNew = { newProject = it; navigate("new") }, onOpen = {
                 vm.openWorkspace(it); terminal = false; createAgent = false; explorer = false; scope.launch { drawer.close() }
-            }, onHosts = { navigate("hosts") }, onAppearance = ::openAppearance, onRefresh = { vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() } },
+            }, onHosts = {
+                if (hosts.isEmpty()) navigate("hosts")
+                else {
+                    hostPickerOpen = true
+                    scope.launch { drawer.close() }
+                }
+            }, onAppearance = ::openAppearance, onRefresh = { vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() } },
                 onMore = { vm.action { vm.repository.refreshWorkspaces(loadMore = true) } })
         }
     }) {
@@ -139,11 +157,17 @@ fun PaseoApp(vm: AppViewModel) {
             if (!welcome && screen != "scan") {
                 Column(Modifier.statusBarsPadding().padding(top = if (compactWorkspace) 8.dp else 0.dp)) {
                     Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = if (compactWorkspace) 12.dp else 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compactWorkspace) 8.dp else 0.dp)) {
-                        if (screen == "appearance") IconButton(onClick = { vm.navigate(appearanceReturnScreen) }) { PaseoGlyph(R.drawable.lucide_arrow_left, "返回", Modifier.size(18.dp), LocalPaseoPalette.current.foregroundMuted) }
+                        if (screen == "appearance") IconButton(onClick = { vm.navigate(appearanceReturnScreen) }) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回", Modifier.size(18.dp), LocalPaseoPalette.current.foregroundMuted) }
+                        else if (screen == "host-settings") IconButton(onClick = {
+                            if (hostSettingsSection != "host") hostSettingsSection = "host"
+                            else vm.navigate(hostSettingsReturnScreen)
+                        }) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回", Modifier.size(18.dp), LocalPaseoPalette.current.foregroundMuted) }
                         else IconButton(onClick = { scope.launch { drawer.open() } }, modifier = if (compactWorkspace) Modifier.size(32.dp) else Modifier) { PaseoGlyph(PaseoIcons.MobileMenu, "打开侧栏", Modifier.size(16.dp, 12.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
                         run {
                             Column(Modifier.weight(1f).padding(start = 2.dp)) {
-                                Text(if (screen == "appearance") "外观" else if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
+                                Text(if (screen == "appearance") "外观" else if (screen == "host-settings") {
+                                    if (hostSettingsSection == "host") "主机" else hostSettingsTitle(hostSettingsSection)
+                                } else if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
                                     style = MaterialTheme.typography.titleSmall.copy(fontSize = if (compactWorkspace) 14.sp else MaterialTheme.typography.titleSmall.fontSize,
                                         lineHeight = if (compactWorkspace) 18.sp else MaterialTheme.typography.titleSmall.lineHeight,
                                         fontWeight = FontWeight.Medium, platformStyle = PlatformTextStyle(includeFontPadding = false)),
@@ -172,6 +196,10 @@ fun PaseoApp(vm: AppViewModel) {
                                 }
                             }
                             if (screen == "hosts") IconButton(onClick = { openPairing(chooseMethod = true); showHostEditor = true }) { PaseoGlyph(PaseoIcons.Plus, "添加主机") }
+                            if (screen == "host-settings") {
+                                IconButton(onClick = { hostPickerOpen = true }) { PaseoGlyph(PaseoIcons.ChevronsUpDown, "切换主机") }
+                                IconButton(onClick = { openPairing(chooseMethod = true); showHostEditor = true }) { PaseoGlyph(PaseoIcons.Plus, "添加主机") }
+                            }
                             if (compactWorkspace && workspace != null) {
                                 IconButton(onClick = { picker = true }, modifier = Modifier.size(32.dp).semantics { contentDescription = "切换代理或终端" }) {
                                     Box(Modifier.sizeIn(minWidth = 16.dp).height(16.dp).border(1.dp, LocalPaseoPalette.current.foregroundMuted, RoundedCornerShape(3.dp)).padding(horizontal = 2.dp), contentAlignment = Alignment.Center) {
@@ -210,6 +238,17 @@ fun PaseoApp(vm: AppViewModel) {
                     screen == "appearance" -> AppearanceSettingsScreen(theme, vm::setTheme, previewUpdate,
                         onCheckUpdates = { dismissedUpdateVersion = -1L; vm.checkForPreviewUpdate() },
                         onInstallUpdate = vm::installPreviewUpdate)
+                    screen == "host-settings" && hostSettingsHost != null -> HostSettingsScreen(
+                        host = hostSettingsHost,
+                        section = hostSettingsSection,
+                        state = state,
+                        onSection = { hostSettingsSection = it },
+                        onEdit = { editingHostId = hostSettingsHost.id; showHostEditor = true },
+                        onRemove = { vm.navigate("hosts"); vm.deleteHost(hostSettingsHost) },
+                        onAppearance = {
+                            appearanceReturnScreen = "host-settings"
+                            vm.navigate("appearance")
+                        })
                     screen == "scan" -> PairScanScreen(vm) { vm.cancelPairing(); vm.navigate("hosts") }
                     !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                     screen == "chat" && state.restoringWorkspace != null -> RestoringWorkspace(state,
@@ -261,6 +300,38 @@ fun PaseoApp(vm: AppViewModel) {
             }
             ListItem(colors = paseoListItemColors(), headlineContent = { Text("新建代理") }, leadingContent = { PaseoGlyph(PaseoIcons.Plus, null) }, modifier = Modifier.clickable { createAgent = true; picker = false })
             ListItem(colors = paseoListItemColors(), headlineContent = { Text("终端") }, leadingContent = { PaseoGlyph(PaseoIcons.SquareTerminal, null) }, modifier = Modifier.clickable { terminal = true; picker = false })
+        }
+    }
+    if (hostPickerOpen) ModalBottomSheet(onDismissRequest = { hostPickerOpen = false },
+        containerColor = LocalPaseoPalette.current.surface0, contentColor = LocalPaseoPalette.current.foreground) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            Text("切换主机", Modifier.padding(horizontal = 24.dp, vertical = 12.dp), style = MaterialTheme.typography.titleSmall)
+            hosts.forEach { host ->
+                ListItem(
+                    colors = paseoListItemColors(),
+                    headlineContent = { Text(host.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    supportingContent = { Text(host.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingContent = { PaseoGlyph(PaseoIcons.Server, null, tint = LocalPaseoPalette.current.foregroundMuted) },
+                    trailingContent = { if (host.id == hostSettingsHostId) PaseoGlyph(PaseoIcons.Check, "当前主机") },
+                    modifier = Modifier.clickable {
+                        hostPickerOpen = false
+                        if (screen == "host-settings") {
+                            hostSettingsHostId = host.id
+                            hostSettingsSection = "host"
+                        } else openHostSettings(host)
+                    },
+                )
+            }
+            ListItem(
+                colors = paseoListItemColors(),
+                headlineContent = { Text("添加主机") },
+                leadingContent = { PaseoGlyph(PaseoIcons.Plus, null) },
+                modifier = Modifier.clickable {
+                    hostPickerOpen = false
+                    openPairing(chooseMethod = true)
+                    showHostEditor = true
+                },
+            )
         }
     }
     if (showHostEditor) {
