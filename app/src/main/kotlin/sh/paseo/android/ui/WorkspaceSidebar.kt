@@ -44,7 +44,7 @@ fun StatusDot(waiting: Boolean = false, running: Boolean = false, failed: Boolea
 @Composable
 fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClose: () -> Unit,
     onNew: (String?) -> Unit, onOpen: (Workspace) -> Unit,
-    onHosts: () -> Unit, onAppearance: () -> Unit, onRefresh: () -> Unit, onMore: () -> Unit) {
+    onHosts: () -> Unit, onSettings: () -> Unit, onRefresh: () -> Unit, onMore: () -> Unit) {
     var search by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var preferences by remember { mutableStateOf(false) }
@@ -160,7 +160,7 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                 SidebarIcon(PaseoIcons.Server, "管理主机，${if (state.connected) "已连接" else "未连接"}", onHosts)
                 Spacer(Modifier.weight(1f))
                 SidebarIcon(PaseoIcons.CircleHelp, "帮助", { help = true })
-                SidebarIcon(PaseoIcons.Settings, "设置", onAppearance)
+                SidebarIcon(PaseoIcons.Settings, "设置", onSettings)
             }
         }
     }

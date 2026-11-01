@@ -21,7 +21,7 @@ import sh.paseo.android.appearance.ThemePreference
 import sh.paseo.android.data.PreviewUpdateState
 
 @Composable
-fun AppearanceSettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Unit,
+fun SettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Unit,
     update: PreviewUpdateState, onCheckUpdates: () -> Unit, onInstallUpdate: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

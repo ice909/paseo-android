@@ -50,7 +50,7 @@ class HostSettingsActivity : ComponentActivity() {
                     onBack = ::finish,
                     onOpenSection = { next -> open(this, hostId, next) },
                     onEdit = { openHostEditor(hostId) },
-                    onAppearance = { openAppearance() },
+                    onAppearance = { openSettings() },
                     onRemove = { host -> vm.deleteHost(host); finish() },
                 )
             }
@@ -76,8 +76,8 @@ class HostSettingsActivity : ComponentActivity() {
         startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_EDIT_HOST_ID, hostId))
     }
 
-    private fun openAppearance() {
-        AppearanceActivity.open(this)
+    private fun openSettings() {
+        SettingsActivity.open(this)
     }
 
     companion object {

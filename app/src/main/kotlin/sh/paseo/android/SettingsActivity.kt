@@ -19,7 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import sh.paseo.android.appearance.PaseoThemes
 import sh.paseo.android.ui.*
 
-class AppearanceActivity : ComponentActivity() {
+class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val applicationOwner = application as PaseoApplication
@@ -50,14 +50,14 @@ class AppearanceActivity : ComponentActivity() {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 IconButton(onClick = ::finish) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回", Modifier.size(18.dp)) }
-                                Text("外观", style = MaterialTheme.typography.titleSmall)
+                                Text("设置", style = MaterialTheme.typography.titleSmall)
                             }
                             HorizontalDivider(color = palette.border)
                         }
                     },
                 ) { padding ->
                     Box(Modifier.fillMaxSize().padding(padding)) {
-                        AppearanceSettingsScreen(
+                        SettingsScreen(
                             preference = preference,
                             onTheme = vm::setTheme,
                             update = update,
@@ -72,7 +72,7 @@ class AppearanceActivity : ComponentActivity() {
 
     companion object {
         fun open(context: Context) {
-            context.startActivity(Intent(context, AppearanceActivity::class.java))
+            context.startActivity(Intent(context, SettingsActivity::class.java))
         }
     }
 }

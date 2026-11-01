@@ -40,6 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import sh.paseo.android.AppViewModel
 import sh.paseo.android.HostSettingsActivity
+import sh.paseo.android.SettingsActivity
 import sh.paseo.android.core.*
 
 @Composable
@@ -67,17 +68,14 @@ fun PaseoApp(
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val theme by vm.theme.collectAsStateWithLifecycle()
-    var appearanceReturnScreen by rememberSaveable { mutableStateOf(vm.screen.value) }
     var hostPickerOpen by rememberSaveable { mutableStateOf(false) }
     var editingHostId by rememberSaveable { mutableStateOf(initialEditHostId) }
     val editingHost = hosts.find { it.id == editingHostId }
     var directPairing by rememberSaveable { mutableStateOf(false) }
     var choosePairingMethod by rememberSaveable { mutableStateOf(false) }
     val welcome = screen == "hosts" && hosts.isEmpty()
-    fun openAppearance() {
-        appearanceReturnScreen = screen
-        vm.navigate("appearance")
+    fun openSettings() {
+        SettingsActivity.open(context)
         scope.launch { drawer.close() }
     }
     fun openPairing(direct: Boolean = false, chooseMethod: Boolean = false) {
@@ -121,17 +119,16 @@ fun PaseoApp(
             vm.repository.clearError()
         }
     }
-    BackHandler(drawer.isOpen || screen == "scan" || screen == "appearance" || explorer || createAgent || (screen == "hosts" && state.host != null)) {
+    BackHandler(drawer.isOpen || screen == "scan" || explorer || createAgent || (screen == "hosts" && state.host != null)) {
         when {
             drawer.isOpen -> scope.launch { drawer.close() }
             screen == "scan" -> { vm.cancelPairing(); vm.navigate("hosts") }
-            screen == "appearance" -> vm.navigate(appearanceReturnScreen)
             explorer -> explorer = false
             createAgent -> createAgent = false
             else -> { vm.backToSessions(); terminal = false }
         }
     }
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = screen != "hosts" && screen != "appearance" && !explorer, drawerContent = {
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = screen != "hosts" && !explorer, drawerContent = {
         ModalDrawerSheet(drawerContainerColor = sidebarColor(), drawerContentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.widthIn(max = 340.dp).fillMaxHeight()) {
             WorkspaceSidebar(vm, state, active = drawer.isOpen, onClose = { scope.launch { drawer.close() } }, onNew = { newProject = it; navigate("new") }, onOpen = {
                 vm.openWorkspace(it); terminal = false; createAgent = false; explorer = false; scope.launch { drawer.close() }
@@ -141,7 +138,7 @@ fun PaseoApp(
                     hostPickerOpen = true
                     scope.launch { drawer.close() }
                 }
-            }, onAppearance = ::openAppearance, onRefresh = { vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() } },
+            }, onSettings = ::openSettings, onRefresh = { vm.action { vm.repository.refreshWorkspaces(); vm.repository.refreshAgents() } },
                 onMore = { vm.action { vm.repository.refreshWorkspaces(loadMore = true) } })
         }
     }) {
@@ -155,11 +152,10 @@ fun PaseoApp(
             if (!welcome && screen != "scan") {
                 Column(Modifier.statusBarsPadding().padding(top = if (compactWorkspace) 8.dp else 0.dp)) {
                     Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = if (compactWorkspace) 12.dp else 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compactWorkspace) 8.dp else 0.dp)) {
-                        if (screen == "appearance") IconButton(onClick = { vm.navigate(appearanceReturnScreen) }) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回", Modifier.size(18.dp), LocalPaseoPalette.current.foregroundMuted) }
-                        else IconButton(onClick = { scope.launch { drawer.open() } }, modifier = if (compactWorkspace) Modifier.size(32.dp) else Modifier) { PaseoGlyph(PaseoIcons.MobileMenu, "打开侧栏", Modifier.size(16.dp, 12.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
+                        IconButton(onClick = { scope.launch { drawer.open() } }, modifier = if (compactWorkspace) Modifier.size(32.dp) else Modifier) { PaseoGlyph(PaseoIcons.MobileMenu, "打开侧栏", Modifier.size(16.dp, 12.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
                         run {
                             Column(Modifier.weight(1f).padding(start = 2.dp)) {
-                                Text(if (screen == "appearance") "外观" else if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
+                                Text(if (screen == "hosts") "主机" else if (screen == "chat" && !createAgent) workspace?.name ?: "工作区" else "paseo",
                                     style = MaterialTheme.typography.titleSmall.copy(fontSize = if (compactWorkspace) 14.sp else MaterialTheme.typography.titleSmall.fontSize,
                                         lineHeight = if (compactWorkspace) 18.sp else MaterialTheme.typography.titleSmall.lineHeight,
                                         fontWeight = FontWeight.Medium, platformStyle = PlatformTextStyle(includeFontPadding = false)),
@@ -223,9 +219,6 @@ fun PaseoApp(
             topBar = { if (!floatingHeader) header() }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 contentState.SaveableStateProvider(screen) { when {
-                    screen == "appearance" -> AppearanceSettingsScreen(theme, vm::setTheme, previewUpdate,
-                        onCheckUpdates = { dismissedUpdateVersion = -1L; vm.checkForPreviewUpdate() },
-                        onInstallUpdate = vm::installPreviewUpdate)
                     screen == "scan" -> PairScanScreen(vm) { vm.cancelPairing(); vm.navigate("hosts") }
                     !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                     screen == "chat" && state.restoringWorkspace != null -> RestoringWorkspace(state,
@@ -236,7 +229,7 @@ fun PaseoApp(
                         onScan = { vm.navigate("scan") },
                         onDirect = { openPairing(direct = true); showHostEditor = true },
                         onPasteLink = { openPairing(); showHostEditor = true },
-                        onSettings = ::openAppearance)
+                        onSettings = ::openSettings)
                     screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { openPairing(chooseMethod = true); showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
                     screen == "chat" && workspace != null && !createAgent -> if (terminal) TerminalPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else ChatScreen(vm, state, snackbar, onCreateAgent = { createAgent = true }, topOverlayInset = topOverlayInset, expanded = composerFullscreen, onFullscreenChange = { composerFullscreen = it })
                     else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject, onManageHosts = { navigate("hosts") }) { launchTerminal -> createAgent = false; terminal = launchTerminal }
