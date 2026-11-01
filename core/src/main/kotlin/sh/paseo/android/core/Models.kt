@@ -29,9 +29,15 @@ fun newId(): String = UUID.randomUUID().toString()
 @Serializable
 data class Host(
     val id: String = newId(), val name: String, val url: String, val password: String = "",
-    val relay: RelayOffer? = null, val automaticName: Boolean = false,
+    val relay: RelayOffer? = null, val automaticName: Boolean = false, val directUrl: String? = null,
 ) {
     val displayName: String get() = name.ifBlank { relay?.serverId ?: runCatching { URI(url).host }.getOrNull() ?: "Paseo 主机" }
+}
+
+fun Host.connectionCandidates(): List<Host> {
+    val direct = directUrl?.takeIf { it.isNotBlank() } ?: return listOf(this)
+    if (relay == null) return listOf(this)
+    return listOf(copy(url = direct, relay = null), this)
 }
 
 @Serializable
@@ -109,6 +115,7 @@ enum class ConnectionStatus { Disconnected, Connecting, Connected, Reconnecting 
 data class PaseoState(
     val serverId: String = "",
     val host: Host? = null,
+    val activeConnectionUrl: String? = null,
     val connection: ConnectionStatus = ConnectionStatus.Disconnected,
     val serverName: String = "", val features: JsonObject = jsonObject(), val capabilities: JsonObject = jsonObject(),
     val agents: List<Agent> = emptyList(),

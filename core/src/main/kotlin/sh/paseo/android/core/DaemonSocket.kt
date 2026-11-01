@@ -41,7 +41,7 @@ class DaemonSocket(
     private var retryHandshake: Job? = null
     private var handshake: CompletableDeferred<JsonObject>? = null
 
-    suspend fun open(host: Host): JsonObject {
+    suspend fun open(host: Host, timeoutMs: Long = 20_000): JsonObject {
         disconnect()
         val attempt = generation.incrementAndGet()
         val ready = CompletableDeferred<JsonObject>()
@@ -166,7 +166,7 @@ class DaemonSocket(
                     else IOException("连接失败，请检查网络或主机是否在线", t))
             }
         })
-        return try { withTimeout(20_000) { ready.await() } }
+        return try { withTimeout(timeoutMs) { ready.await() } }
         catch (error: Exception) { disconnect(); throw error }
     }
 

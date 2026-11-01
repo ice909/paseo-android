@@ -251,7 +251,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     private suspend fun networkAccess(host: Host): Boolean {
-        if (!LocalNetworkAccess.permissionMissing(getApplication()) || !LocalNetworkAccess.isLocalHost(host)) return true
+        val hasLocalRoute = LocalNetworkAccess.isLocalHost(host) ||
+            host.directUrl?.let { LocalNetworkAccess.isLocalHost(host.copy(url = it, relay = null)) } == true
+        if (!LocalNetworkAccess.permissionMissing(getApplication()) || !hasLocalRoute) return true
         networkPermissionResult?.cancel()
         val result = CompletableDeferred<Boolean>()
         networkPermissionResult = result
@@ -272,7 +274,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _screen.value = destination
         action { persist(host.id) }
     }
-    fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit): Job {
+    fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit): Job =
+        saveHost(id, name, address, password, "", onSaved)
+    fun saveHost(id: String?, name: String, address: String, password: String, directAddress: String, onSaved: () -> Unit): Job {
         val attempt = ++pairingGeneration
         pairingJob?.cancel()
         pairingBusy.value = true
@@ -284,9 +288,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val relay = endpoint.relay
                 val existing = hosts.value.find { old -> old.id == id || (id == null &&
                     if (relay != null) old.relay?.serverId == relay.serverId else old.relay == null && old.url == endpoint.url) }
+                val directEndpoint = directAddress.trim().takeIf { it.isNotEmpty() }?.let {
+                    val direct = Endpoint.parse(it)
+                    require(direct.relay == null) { "局域网地址请填写 ws / wss / tcp 主机地址，不要填写配对链接" }
+                    require(relay != null) { "请使用配对链接作为主机地址，局域网地址作为备用连接" }
+                    direct
+                }
                 val preservedName = existing?.takeIf { id == null && !it.automaticName }?.name
                 val draft = Host(id ?: existing?.id ?: newId(), name.trim(), endpoint.url,
-                    password.ifEmpty { endpoint.password.orEmpty() }, relay, automaticName = name.isBlank() && preservedName == null)
+                    password.ifEmpty { endpoint.password ?: directEndpoint?.password.orEmpty() }, relay,
+                    automaticName = name.isBlank() && preservedName == null, directUrl = directEndpoint?.url)
                 if (!networkAccess(draft)) {
                     pairingError.value = "连接局域网主机需要附近设备权限，请允许后重试。"
                     return@launch
@@ -294,8 +305,36 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // Probe before replacing or saving a host. Invalid links/passwords leave existing hosts untouched.
                 val candidate = DaemonSocket()
                 probe = candidate
-                val info = withContext(Dispatchers.IO) { candidate.open(draft) }
-                val label = name.trim().ifBlank { preservedName ?: info.string("hostname").ifBlank { draft.displayName } }
+                val validationCandidates = buildList {
+                    directEndpoint?.let { add(draft.copy(url = it.url, relay = null)) }
+                    add(draft)
+                }
+                var info: kotlinx.serialization.json.JsonObject? = null
+                var validationError: Exception? = null
+                for (validationHost in validationCandidates) {
+                    try {
+                        val result = withContext(Dispatchers.IO) {
+                            candidate.open(validationHost, timeoutMs = if (validationHost.relay == null && relay != null) 6_000 else 20_000)
+                        }
+                        if (validationHost.relay == null && relay != null && result.string("serverId") != relay.serverId) {
+                            candidate.disconnect()
+                            throw AuthenticationException("局域网地址连接到的不是配对中的主机", AuthFailure.Security)
+                        }
+                        info = result
+                        break
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: AuthenticationException) {
+                        if (validationHost.relay == null && error.reason == AuthFailure.Security) throw error
+                        validationError = error
+                        candidate.disconnect()
+                    } catch (error: Exception) {
+                        validationError = error
+                        candidate.disconnect()
+                    }
+                }
+                val verifiedInfo = info ?: throw validationError ?: IllegalStateException("无法验证主机连接")
+                val label = name.trim().ifBlank { preservedName ?: verifiedInfo.string("hostname").ifBlank { draft.displayName } }
                 val host = draft.copy(name = label)
                 val updated = hosts.value.filterNot { it.id == host.id } + host
                 storageMutex.withLock { store.save(updated, host.id); hosts.value = updated }

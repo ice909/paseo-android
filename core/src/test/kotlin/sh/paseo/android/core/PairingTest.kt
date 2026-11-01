@@ -30,4 +30,15 @@ class PairingTest {
             "relay://host:443/server?key=$key&security=legacy", "relay://host:443/server?key=${b64(ByteArray(32))}",
             link(jsonObject("v" to 1))).forEach { input -> assertTrue(runCatching { Endpoint.parse(input) }.isFailure) }
     }
+    @Test fun localConnectionIsTriedBeforeItsRelayFallback() {
+        val relay = RelayOffer("server", key, "relay.paseo.sh:443", true)
+        val host = Host(name = "Paseo", url = "wss://relay.paseo.sh:443/ws?serverId=server",
+            relay = relay, directUrl = Endpoint.parse("192.168.1.10:6767").url)
+        val candidates = host.connectionCandidates()
+        assertEquals(2, candidates.size)
+        assertEquals("ws://192.168.1.10:6767/ws", candidates[0].url)
+        assertNull(candidates[0].relay)
+        assertEquals(host.url, candidates[1].url)
+        assertEquals(relay, candidates[1].relay)
+    }
 }

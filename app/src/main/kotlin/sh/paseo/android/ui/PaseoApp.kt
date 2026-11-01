@@ -356,7 +356,10 @@ private fun HostsScreen(hosts: List<Host>, state: PaseoState, onConnect: (Host) 
                     Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(host.displayName, style = MaterialTheme.typography.titleMedium)
                         Text(host.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (host.id == state.host?.id && state.connected) Text("已连接", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        if (host.id == state.host?.id && state.connected) Text(
+                            if (host.relay == null || host.directUrl == state.activeConnectionUrl) "已连接 · 局域网直连" else "已连接 · 中继",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        if (host.directUrl != null) Text("已配置局域网优先，连接失败时回退中继", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { onEdit(host) }) { PaseoGlyph(PaseoIcons.Pencil, "编辑 ${host.displayName}", Modifier.size(20.dp)) }
                     IconButton(onClick = { deleting = host }) { PaseoGlyph(PaseoIcons.Trash2, "移除 ${host.displayName}", Modifier.size(20.dp)) }
@@ -411,6 +414,7 @@ fun EmptyState(icon: Int, title: String, description: String, modifier: Modifier
 private fun HostEditor(vm: AppViewModel, host: Host?, onDismiss: () -> Unit) {
     var name by rememberSaveable { mutableStateOf(host?.takeUnless { it.automaticName }?.name.orEmpty()) }
     var address by rememberSaveable { mutableStateOf(host?.relay?.pairingLink() ?: host?.url.orEmpty()) }
+    var directAddress by rememberSaveable { mutableStateOf(host?.directUrl.orEmpty()) }
     var password by rememberSaveable { mutableStateOf(host?.password.orEmpty()) }
     var manual by rememberSaveable { mutableStateOf(host != null && host.relay == null) }
     var more by rememberSaveable { mutableStateOf(false) }
@@ -423,12 +427,16 @@ private fun HostEditor(vm: AppViewModel, host: Host?, onDismiss: () -> Unit) {
     fun changeAddress(text: String) { address = text; password = ""; vm.clearPairingError(resetPassword = true) }
     LaunchedEffect(Unit) { vm.clearPairingError(resetPassword = true) }
     AlertDialog(onDismissRequest = ::dismiss, title = { Text(if (manual) "手动连接" else "粘贴配对链接") },
-        text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        text = { Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(if (manual) "使用电脑的局域网、VPN 或 Tailscale 地址。" else "复制电脑上 Paseo 提供的配对链接，粘贴后即可连接。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(address, ::changeAddress, label = { Text(if (manual) "主机地址" else "配对链接") },
                 placeholder = { Text(if (manual) "192.168.1.10:6767" else "https://app.paseo.sh/#offer=…") },
                 modifier = Modifier.fillMaxWidth(), maxLines = 3, isError = error != null && !needsPassword, enabled = !saving,
                 trailingIcon = { IconButton(onClick = { clipboard.getText()?.text?.let(::changeAddress) }, enabled = !saving) { PaseoGlyph(PaseoIcons.ClipboardPaste, "从剪贴板粘贴链接") } })
+            if (host != null) OutlinedTextField(directAddress, { directAddress = it; vm.clearPairingError() },
+                label = { Text("局域网直连地址（可选）") }, placeholder = { Text("192.168.1.10:6767") },
+                supportingText = { Text("保存配对链接后，优先使用此地址；局域网不可达时自动回退中继。") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !saving)
             if (manual || needsPassword) OutlinedTextField(password, { password = it; vm.clearPairingError() }, label = { Text(if (needsPassword) "主机密码" else "密码（可选）") }, singleLine = true, enabled = !saving,
                 modifier = Modifier.fillMaxWidth(), visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = { IconButton(onClick = { visible = !visible }) { PaseoGlyph(if (visible) PaseoIcons.EyeOff else PaseoIcons.Eye, "显示或隐藏密码") } })
@@ -444,7 +452,7 @@ private fun HostEditor(vm: AppViewModel, host: Host?, onDismiss: () -> Unit) {
             }
         } },
         confirmButton = { TextButton(enabled = address.isNotBlank() && !saving, onClick = {
-            vm.saveHost(host?.id, name, address, password, onDismiss)
+            vm.saveHost(host?.id, name, address, password, directAddress, onDismiss)
         }) { Text(if (saving) "连接中…" else "连接") } },
         dismissButton = { TextButton(onClick = ::dismiss) { Text("取消") } })
 }

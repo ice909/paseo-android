@@ -52,9 +52,40 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     catalogSubscription = null
                     timelineSubscription = null
                     workspaceSubscription = null
-                    val info = socket.open(host)
-                    creationLifecycle = info.obj("features").bool("creationLifecycle")
-                    _state.update { it.copy(connection = ConnectionStatus.Connected, serverName = info.string("hostname").ifBlank { host.name }, serverId = info.string("serverId"), features = info.obj("features"), capabilities = info.obj("capabilities"), error = null) }
+                    var info: JsonObject? = null
+                    var connectedHost: Host? = null
+                    var lastConnectionError: Exception? = null
+                    for (candidate in host.connectionCandidates()) {
+                        try {
+                            val candidateInfo = socket.open(candidate,
+                                timeoutMs = if (candidate.relay == null && host.relay != null) 6_000 else 20_000)
+                            val expectedServerId = host.relay?.serverId
+                            val actualServerId = candidateInfo.string("serverId")
+                            if (candidate.relay == null && expectedServerId != null &&
+                                actualServerId != expectedServerId) {
+                                socket.disconnect()
+                                throw AuthenticationException("局域网地址连接到的不是配对中的主机", AuthFailure.Security)
+                            }
+                            info = candidateInfo
+                            connectedHost = candidate
+                            break
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: AuthenticationException) {
+                            if (candidate.relay == null && error.reason == AuthFailure.Security) throw error
+                            lastConnectionError = error
+                            socket.disconnect()
+                        } catch (error: Exception) {
+                            lastConnectionError = error
+                            socket.disconnect()
+                        }
+                    }
+                    val activeInfo = info ?: throw lastConnectionError ?: IOException("没有可用的主机连接")
+                    val activeHost = connectedHost ?: host
+                    creationLifecycle = activeInfo.obj("features").bool("creationLifecycle")
+                    _state.update { it.copy(activeConnectionUrl = activeHost.url, connection = ConnectionStatus.Connected,
+                        serverName = activeInfo.string("hostname").ifBlank { host.name }, serverId = activeInfo.string("serverId"),
+                        features = activeInfo.obj("features"), capabilities = activeInfo.obj("capabilities"), error = null) }
                     coroutineScope {
                         launch {
                             fetchAgents(subscribe = true)
@@ -70,7 +101,33 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     if (state.value.restoringWorkspace != null) restoreWorkspace()
                     else state.value.selectedAgentId?.let { selectAgent(it) }
                     attempt = 0
-                    socket.connected.first { !it }
+                    coroutineScope {
+                        val localProbe = if (activeHost.relay != null && !host.directUrl.isNullOrBlank()) launch {
+                            while (isActive) {
+                                delay(30_000)
+                                val probe = DaemonSocket()
+                                try {
+                                    val info = probe.open(host.copy(url = host.directUrl, relay = null), timeoutMs = 6_000)
+                                    val expectedServerId = host.relay?.serverId
+                                    if (expectedServerId != null && info.string("serverId") == expectedServerId) {
+                                        val current = state.value
+                                        if (current.host?.id == host.id && current.connection == ConnectionStatus.Connected) {
+                                            connect(host, current.workspaceSelection())
+                                            return@launch
+                                        }
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    // A failed local probe leaves the working relay connection untouched.
+                                } finally {
+                                    probe.close()
+                                }
+                            }
+                        } else null
+                        try { socket.connected.first { !it } }
+                        finally { localProbe?.cancel() }
+                    }
                 } catch (cancelled: CancellationException) {
                     if (!isActive) throw cancelled
                     _state.update { it.copy(error = "连接或请求超时") }
