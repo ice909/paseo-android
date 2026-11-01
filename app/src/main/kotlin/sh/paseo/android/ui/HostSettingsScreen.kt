@@ -33,6 +33,9 @@ private val hostSettingsSections = listOf(
 internal fun hostSettingsTitle(section: String): String =
     if (section == "host") "主机" else hostSettingsSections.find { it.id == section }?.title ?: "主机"
 
+internal fun isHostSettingsSection(section: String): Boolean =
+    section == "host" || hostSettingsSections.any { it.id == section }
+
 @Composable
 internal fun HostSettingsScreen(
     host: Host,

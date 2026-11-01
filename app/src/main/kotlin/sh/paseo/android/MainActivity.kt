@@ -20,9 +20,14 @@ import sh.paseo.android.ui.PaseoTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val vm = ViewModelProvider(this)[AppViewModel::class.java]
+        val applicationOwner = application as PaseoApplication
+        val vm = ViewModelProvider(
+            applicationOwner,
+            ViewModelProvider.AndroidViewModelFactory.getInstance(application),
+        )[AppViewModel::class.java]
         val systemDark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         applyWindowTheme(PaseoThemes.resolve(vm.theme.value, systemDark))
+        val editHostId = intent.getStringExtra(EXTRA_EDIT_HOST_ID)
         setContent {
             val preference by vm.theme.collectAsStateWithLifecycle()
             PaseoTheme(preference) {
@@ -31,15 +36,19 @@ class MainActivity : ComponentActivity() {
                     applyWindowTheme(palette)
                     onDispose { }
                 }
-                PaseoApp(vm)
+                PaseoApp(vm, initialEditHostId = editHostId)
             }
         }
     }
 
-    private fun applyWindowTheme(palette: PaseoPalette) {
-        val transparent = android.graphics.Color.TRANSPARENT
-        val bars = if (palette.dark) SystemBarStyle.dark(transparent) else SystemBarStyle.light(transparent, transparent)
-        enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
-        window.decorView.setBackgroundColor(palette.surface0.toArgb())
+    companion object {
+        const val EXTRA_EDIT_HOST_ID = "sh.paseo.android.EDIT_HOST_ID"
     }
+}
+
+internal fun ComponentActivity.applyWindowTheme(palette: PaseoPalette) {
+    val transparent = android.graphics.Color.TRANSPARENT
+    val bars = if (palette.dark) SystemBarStyle.dark(transparent) else SystemBarStyle.light(transparent, transparent)
+    enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+    window.decorView.setBackgroundColor(palette.surface0.toArgb())
 }
