@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,6 +30,7 @@ fun SidebarHistory(vm: AppViewModel, state: PaseoState, onDismiss: () -> Unit, o
     var loading by remember { mutableStateOf(false) }
     var preview by remember(state.host?.id) { mutableStateOf<Agent?>(null) }
     var rows by remember(preview?.id) { mutableStateOf<List<TimelineRow>>(emptyList()) }
+    val maxSheetHeight = LocalConfiguration.current.screenHeightDp.dp * .9f
     LaunchedEffect(state.host?.id, state.connected, query, cursor, retry, preview?.id) {
         error = null
         if (!state.connected) { error = "请先连接主机"; return@LaunchedEffect }
@@ -47,7 +49,7 @@ fun SidebarHistory(vm: AppViewModel, state: PaseoState, onDismiss: () -> Unit, o
     }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = LocalPaseoPalette.current.surface0,
         contentColor = LocalPaseoPalette.current.foreground, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).padding(horizontal = 16.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = maxSheetHeight).padding(horizontal = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (preview != null) IconButton(onClick = { preview = null }) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回历史", Modifier.size(18.dp)) }
                 Text(preview?.displayTitle ?: "历史", style = MaterialTheme.typography.titleMedium, maxLines = 1,
