@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,6 +104,21 @@ private fun attachmentBitmap(path: String, maxEdge: Int): ImageBitmap? {
 }
 
 @Composable
+private fun InlineImageAttachment(attachment: ChatAttachment) {
+    var preview by remember { mutableStateOf(false) }
+    val bitmap = attachmentBitmap(attachment.localPath, 2048)
+    if (bitmap != null) {
+        val ratio = bitmap.width.toFloat() / bitmap.height
+        val maxSize = 280.dp
+        val width = if (ratio >= 1f) maxSize else maxSize * ratio
+        val height = if (ratio >= 1f) maxSize / ratio else maxSize
+        Image(bitmap, attachment.name, Modifier.padding(top = 4.dp).size(width, height)
+            .clip(RoundedCornerShape(8.dp)).clickable { preview = true }, contentScale = ContentScale.Fit)
+    }
+    if (preview) AttachmentPreview(attachment) { preview = false }
+}
+
+@Composable
 private fun AttachmentPreview(attachment: ChatAttachment, onDismiss: () -> Unit) {
     if (attachment.isImage) Dialog(onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = LocalPaseoPalette.current.surface0) {
@@ -153,11 +169,13 @@ fun ChatUserMessage(row: TimelineRow, localAttachments: List<ChatAttachment>, ag
     val attachments = localAttachments.ifEmpty { row.attachments.mapIndexed { index, payload -> ChatAttachment("${row.messageId}:$index",
         payload.string("fileName").ifBlank { payload.string("title").ifBlank { payload.string("type") } }, payload.string("mimeType"), payload = payload) } }
     val pending = row.status in setOf("sending", "accepted", "queued")
+    val localImages = localAttachments.filter { it.isImage }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         Surface(color = palette.surface3, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp), modifier = Modifier.widthIn(max = 680.dp)) {
             Column(Modifier.padding(16.dp)) {
-                ChatAttachmentTray(attachments)
-                if (localAttachments.none { it.isImage }) row.images.forEachIndexed { index, image ->
+                ChatAttachmentTray(attachments.filterNot { it.isImage })
+                if (localImages.isNotEmpty()) localImages.forEach { InlineImageAttachment(it) }
+                else row.images.forEachIndexed { index, image ->
                     val data = image.string("data")
                     if (data.isNotBlank()) MessageImage("data:${image.string("mimeType").ifBlank { "image/png" }};base64,$data", "图片", vm, connected, key.hostId, agent.cwd, "${agent.id}:${row.key}:$index", thumbnail = true)
                 }
