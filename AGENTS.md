@@ -29,6 +29,11 @@ systemd-run --user --scope -p MemoryMax=3G -p MemorySwapMax=0 -- \
 - 任务结束或中断后，确认本次启动的 Gradle / Kotlin 编译进程已退出。
 - 只按确认过的 PID 清理本项目空闲进程，禁止 `killall java`、宽泛的 `pkill` 或影响其他项目。使用 Gradle `--stop` 前确认不会中断同用户、同版本的其他项目 daemon。
 
+## 提交信息
+
+- Git commit 标题使用约定式提交格式：`<type>(可选范围): 简短描述`，例如 `feat(chat): add queued message sending`、`fix: preserve relay fallback`、`docs: clarify LAN setup`。
+- 优先使用 `feat`、`fix`、`docs`、`style`、`refactor`、`test`、`build`、`ci`、`chore`、`perf` 等类型；标题简洁明确，不加句号。
+
 ## 界面与图标
 
 - 图标统一使用 `PaseoIcons` / `PaseoGlyph`，按官方对应功能选图，不引入 Material Icons 或近似图标库。

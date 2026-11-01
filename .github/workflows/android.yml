@@ -1,7 +1,11 @@
 name: Android
 on:
   push:
+    paths-ignore:
+      - 'AGENTS.md'
   pull_request:
+    paths-ignore:
+      - 'AGENTS.md'
 env:
   PREVIEW_VERSION_BASE: '0.10.0'
 jobs:
