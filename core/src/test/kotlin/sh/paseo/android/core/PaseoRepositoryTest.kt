@@ -114,6 +114,7 @@ class PaseoRepositoryTest {
             assertEquals("workspace1", recovered.selectedWorkspaceId)
             assertEquals("agent1", recovered.selectedAgentId)
             assertNull(recovered.restoringWorkspace)
+            assertTrue(recovered.loadingTimeline)
         } finally { repository.close(); server.close() }
     }
 }

@@ -157,7 +157,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (remembered != null && saved.hosts.none { it.id == remembered.hostId }) workspaceSelectionStore.clear()
                 if (navigationRevision == startupRevision) {
                     val hostId = workspaceSelectionStore.selection?.hostId ?: saved.lastHostId
-                    (saved.hosts.find { it.id == hostId } ?: saved.hosts.firstOrNull())?.let(::connect)
+                    val host = saved.hosts.find { it.id == hostId } ?: saved.hosts.firstOrNull()
+                    val restore = workspaceSelectionStore.selection?.takeIf { it.hostId == host?.id }
+                    if (restore != null) _screen.value = "chat"
+                    host?.let { repository.connect(it, restore) }
                 }
             } catch (error: Exception) { notices.emit("无法读取主机配置：${error.message}") }
             finally { initialized.value = true }

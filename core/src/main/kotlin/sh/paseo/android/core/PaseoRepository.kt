@@ -142,7 +142,11 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                 socket.disconnect()
                 timelineJob?.cancel()
                 publishJob?.cancel()
-                _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = false, error = null) }
+                _state.update { it.copy(
+                    connection = ConnectionStatus.Reconnecting,
+                    loadingTimeline = it.selectedAgentId != null,
+                    error = null,
+                ) }
                 withTimeoutOrNull(min(30_000L, 1_000L shl min(attempt++, 5))) {
                     reconnectRequests.receive()
                 }
@@ -184,7 +188,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             current.host != null &&
             socket.connectionToken() == token &&
             socket.connected.value) {
-            _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = false) }
+            _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = true) }
             socket.disconnect()
         }
     }

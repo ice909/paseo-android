@@ -163,8 +163,19 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
     CompositionLocalProvider(LocalToolExpansion provides rememberToolExpansion()) {
     Column(Modifier.fillMaxSize().then(if (expanded) Modifier.statusBarsPadding() else Modifier).imePadding()) {
         Box(Modifier.fillMaxWidth().then(if (expanded) Modifier.height(0.dp) else Modifier.weight(1f))) {
-            if (state.loadingTimeline && rows.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (rows.isEmpty() && !state.loadingTimeline && !turnActive) EmptyState(PaseoIcons.Sparkles, "从一个任务开始", "描述你想完成的工作，代理将在主机上执行。", Modifier.fillMaxSize())
+            if (state.loadingTimeline && presented.isEmpty()) {
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    CircularProgressIndicator(
+                        Modifier.size(36.dp),
+                        color = LocalPaseoPalette.current.foregroundMuted,
+                    )
+                }
+            }
+            if (presented.isEmpty() && !state.loadingTimeline && !turnActive) EmptyState(PaseoIcons.Sparkles, "从一个任务开始", "描述你想完成的工作，代理将在主机上执行。", Modifier.fillMaxSize())
             else LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = topOverlayInset + 16.dp, bottom = 16.dp)) {
                 if (turnActive) item("working") {
