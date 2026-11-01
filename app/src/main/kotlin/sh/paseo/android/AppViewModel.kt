@@ -225,14 +225,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun onAppForegrounded() {
         val current = state.value
-        val host = current.host?.let { active -> hosts.value.find { it.id == active.id } ?: active } ?: return
-        val restore = workspaceSelectionStore.selection?.takeIf { it.hostId == host.id }
-            ?: current.restoringWorkspace?.takeIf { it.hostId == host.id }
+        current.host?.let { active -> hosts.value.find { it.id == active.id } ?: active } ?: return
         when (current.connection) {
-            ConnectionStatus.Reconnecting -> {
-                foregroundVerificationJob?.cancel()
-                repository.connect(host, restore)
-            }
+            ConnectionStatus.Reconnecting -> repository.reconnectNow()
             ConnectionStatus.Connected -> {
                 if (foregroundVerificationJob?.isActive != true) {
                     foregroundVerificationJob = viewModelScope.launch { repository.verifyConnection() }

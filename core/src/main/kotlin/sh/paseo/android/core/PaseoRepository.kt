@@ -3,6 +3,7 @@ package sh.paseo.android.core
 import java.io.IOException
 import kotlin.math.min
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 
@@ -26,6 +27,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     private var catalogSubscription: String? = null
     private var workspaceSubscription: String? = null
     private var creationLifecycle = false
+    private val reconnectRequests = Channel<Unit>(Channel.CONFLATED)
 
     init { scope.launch { socket.messages.collect { message ->
         try { handle(message); _events.emit(message) } catch (error: Exception) { report(error) }
@@ -141,7 +143,9 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                 timelineJob?.cancel()
                 publishJob?.cancel()
                 _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = false, error = null) }
-                delay(min(30_000L, 1_000L shl min(attempt++, 5)))
+                withTimeoutOrNull(min(30_000L, 1_000L shl min(attempt++, 5))) {
+                    reconnectRequests.receive()
+                }
             }
         }
     }
@@ -155,11 +159,15 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         socket.disconnect()
         _state.update { it.copy(connection = ConnectionStatus.Disconnected, loadingTimeline = false, busy = false) }
     }
-    suspend fun verifyConnection() {
+    fun reconnectNow() {
+        reconnectRequests.trySend(Unit)
+    }
+
+    suspend fun verifyConnection(timeoutMs: Long = 3_000) {
         val token = socket.connectionToken()
         if (state.value.connection != ConnectionStatus.Connected || !socket.connected.value) return
         try {
-            socket.ping(expectedGeneration = token)
+            socket.ping(timeoutMs = timeoutMs, expectedGeneration = token)
         } catch (_: TimeoutCancellationException) {
             reconnectIfCurrentConnectionFailed(token)
         } catch (cancelled: CancellationException) {
@@ -176,7 +184,8 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             current.host != null &&
             socket.connectionToken() == token &&
             socket.connected.value) {
-            connect(current.host, current.workspaceSelection() ?: current.restoringWorkspace)
+            _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = false) }
+            socket.disconnect()
         }
     }
     fun clearError() { _state.update { it.copy(error = null) } }

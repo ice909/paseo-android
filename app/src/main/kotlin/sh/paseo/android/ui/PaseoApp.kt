@@ -230,6 +230,8 @@ fun PaseoApp(
                     !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                     screen == "chat" && state.restoringWorkspace != null -> RestoringWorkspace(state,
                         onBack = vm::backToSessions, onHosts = { navigate("hosts") }, onRetry = { state.host?.let(vm::connect) })
+                    screen == "chat" && workspace == null -> RestoringWorkspace(state,
+                        onBack = vm::backToSessions, onHosts = { navigate("hosts") }, onRetry = { state.host?.let(vm::connect) })
                     welcome -> WelcomeScreen(
                         onScan = { vm.navigate("scan") },
                         onDirect = { openPairing(direct = true); showHostEditor = true },

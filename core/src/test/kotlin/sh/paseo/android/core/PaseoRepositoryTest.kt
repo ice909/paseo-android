@@ -54,4 +54,66 @@ class PaseoRepositoryTest {
             assertEquals("deny", permissionResponse!!.obj("response").string("behavior"))
         } finally { repository.close(); server.close() }
     }
+
+    @Test fun foregroundLivenessFailureKeepsTheCurrentWorkspaceSelection() = runBlocking {
+        val server = MockWebServer()
+        val workspace = jsonObject(
+            "id" to "workspace1", "projectId" to "project1", "projectDisplayName" to "Project",
+            "projectRootPath" to "/project", "name" to "Workspace",
+        )
+        val agent = jsonObject(
+            "id" to "agent1", "provider" to "claude", "cwd" to "/project",
+            "workspaceId" to "workspace1", "title" to "Session",
+        )
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val frame = wireJson.parseToJsonElement(text).jsonObject
+                if (frame.string("type") == "hello") {
+                    webSocket.send(DaemonSocketTest.session("status", jsonObject("status" to "server_info", "serverId" to "test")))
+                    return
+                }
+                if (frame.string("type") == "ping") return
+                val message = frame.obj("message")
+                val requestId = message.string("requestId")
+                val (type, payload) = when (message.string("type")) {
+                    "fetch_agents_request" -> "fetch_agents_response" to jsonObject(
+                        "requestId" to requestId, "subscriptionId" to "agents",
+                        "entries" to listOf(jsonObject("agent" to agent)),
+                        "pageInfo" to jsonObject("hasMore" to false),
+                    )
+                    "fetch_workspaces_request" -> "fetch_workspaces_response" to jsonObject(
+                        "requestId" to requestId, "subscriptionId" to "workspaces",
+                        "entries" to listOf(workspace), "pageInfo" to jsonObject("hasMore" to false),
+                    )
+                    "list_available_providers_request" -> "list_available_providers_response" to jsonObject("requestId" to requestId, "providers" to emptyList<Any>())
+                    "agent.timeline.set_subscription.request" -> "agent.timeline.set_subscription.response" to jsonObject("requestId" to requestId, "subscriptionId" to "timeline")
+                    "fetch_agent_timeline_request" -> "fetch_agent_timeline_response" to jsonObject(
+                        "requestId" to requestId, "agentId" to "agent1", "agent" to agent,
+                        "epoch" to "epoch1", "direction" to "tail", "window" to jsonObject("maxSeq" to 0),
+                        "entries" to emptyList<Any>(),
+                    )
+                    else -> return
+                }
+                webSocket.send(DaemonSocketTest.session(type, payload))
+            }
+        }))
+        val repository = PaseoRepository()
+        try {
+            val host = Host(id = "test-host", name = "Test", url = server.url("/ws").toString())
+            repository.connect(
+                host,
+                WorkspaceSelection("test-host", "workspace1", "agent1"),
+            )
+            withTimeout(5_000) {
+                repository.state.first { it.connection == ConnectionStatus.Connected && it.selectedAgentId == "agent1" }
+            }
+            repository.verifyConnection(timeoutMs = 50)
+            withTimeout(5_000) { repository.state.first { it.connection == ConnectionStatus.Reconnecting } }
+            val recovered = repository.state.value
+            assertEquals("workspace1", recovered.selectedWorkspaceId)
+            assertEquals("agent1", recovered.selectedAgentId)
+            assertNull(recovered.restoringWorkspace)
+        } finally { repository.close(); server.close() }
+    }
 }
