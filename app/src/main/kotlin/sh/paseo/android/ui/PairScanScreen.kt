@@ -155,7 +155,7 @@ private fun CameraQrPreview(attempt: Int, paused: Boolean, onCode: (String) -> U
                 if (!disposed.get() && !currentPaused && !delivering.get() && System.nanoTime() - lastDecodeNanos >= 120_000_000L) {
                     lastDecodeNanos = System.nanoTime()
                     val plane = image.planes[0]
-                    val code = decoder.decode(plane.buffer, image.width, image.height, plane.rowStride, plane.pixelStride)
+                    val code = decoder.decode(plane.buffer, image.width, image.height, plane.rowStride, plane.pixelStride, image.imageInfo.rotationDegrees)
                     if (code != null && delivering.compareAndSet(false, true)) main.execute {
                         try { if (!disposed.get() && !currentPaused) currentCode(code) }
                         finally { delivering.set(false) }
