@@ -51,6 +51,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val chatStore = ChatStore(application)
     private val previewUpdates = PreviewUpdates(application)
     val previewUpdateState = MutableStateFlow(PreviewUpdateState())
+    val appVersionName: String = application.packageManager.getPackageInfo(application.packageName, 0).versionName.orEmpty()
+    val dismissedPreviewUpdateVersion = MutableStateFlow(-1L)
+    fun dismissPreviewUpdate(versionCode: Long) {
+        dismissedPreviewUpdateVersion.value = versionCode
+    }
     val sendBehavior = MutableStateFlow(chatStore.behavior)
     val conversationDisplayMode = MutableStateFlow(chatStore.conversationDisplayMode)
     fun setConversationDisplayMode(value: ConversationDisplayMode) {
@@ -183,7 +188,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     progress = if (downloaded != null) 1f else 0f,
                     message = when {
                         downloaded != null -> "下载完成，文件校验通过"
-                        manual && update == null -> "当前已是最新测试版"
+                        manual && update == null -> "当前已是最新版本"
                         else -> null
                     })
             } catch (cancelled: CancellationException) {

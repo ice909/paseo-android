@@ -22,7 +22,7 @@ import sh.paseo.android.data.PreviewUpdateState
 
 @Composable
 fun SettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Unit,
-    update: PreviewUpdateState, onCheckUpdates: () -> Unit, onInstallUpdate: () -> Unit) {
+    versionName: String, update: PreviewUpdateState, onCheckUpdates: () -> Unit, onInstallUpdate: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Column(Modifier.widthIn(max = 820.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -60,8 +60,10 @@ fun SettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Un
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("测试版更新", style = MaterialTheme.typography.titleSmall)
-                        Text(update.message ?: if (update.checking) "正在检查更新…" else "检查 GitHub 上的最新预发布版",
+                        Text("应用更新", style = MaterialTheme.typography.titleSmall)
+                        Text("当前版本：$versionName", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(update.message ?: if (update.checking) "正在检查更新…" else "检查是否有新版本",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     OutlinedButton(onClick = onCheckUpdates, enabled = !update.checking && !update.downloading) {

@@ -62,8 +62,6 @@ fun PaseoApp(
     val screen by vm.screen.collectAsStateWithLifecycle()
     val hosts by vm.hosts.collectAsStateWithLifecycle()
     val initialized by vm.initialized.collectAsStateWithLifecycle()
-    val previewUpdate by vm.previewUpdateState.collectAsStateWithLifecycle()
-    var dismissedUpdateVersion by rememberSaveable { mutableStateOf(-1L) }
     val contentState = rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -312,28 +310,7 @@ fun PaseoApp(
             onScanQr = { showHostEditor = false; openPairScanner() },
             onDismiss = { choosePairingMethod = false; showHostEditor = false })
     }
-    val availableUpdate = previewUpdate.update
-    if (availableUpdate != null && dismissedUpdateVersion != availableUpdate.versionCode) AlertDialog(
-        onDismissRequest = { dismissedUpdateVersion = availableUpdate.versionCode },
-        title = { Text("发现测试版更新：${availableUpdate.versionName}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(availableUpdate.notes.ifBlank { "有新的 Paseo Android 测试版可供下载。" })
-                if (previewUpdate.downloading) LinearProgressIndicator(progress = { previewUpdate.progress }, modifier = Modifier.fillMaxWidth())
-                previewUpdate.message?.let { Text(it, color = if (previewUpdate.downloadedApk != null) LocalPaseoPalette.current.statusSuccess else MaterialTheme.colorScheme.error) }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = !previewUpdate.checking && !previewUpdate.downloading, onClick = {
-                if (previewUpdate.downloadedApk == null) vm.downloadPreviewUpdate() else vm.installPreviewUpdate()
-            }) { Text(when {
-                previewUpdate.downloading -> "下载中…"
-                previewUpdate.downloadedApk != null -> "安装更新"
-                else -> "下载并校验"
-            }) }
-        },
-        dismissButton = { TextButton(onClick = { dismissedUpdateVersion = availableUpdate.versionCode }) { Text("稍后") } },
-    )
+    PreviewUpdateDialog(vm)
     if (rename.isNotEmpty()) TextEntryDialog(if (rename == "workspace") "重命名工作区" else "重命名会话",
         if (rename == "workspace") workspace?.name.orEmpty() else state.selectedAgent?.displayTitle.orEmpty(), "名称", { rename = "" }) { name ->
         vm.action { if (rename == "workspace") workspace?.let { vm.repository.renameWorkspace(it.id, name) } else state.selectedAgentId?.let { vm.repository.renameAgent(it, name) }; rename = "" }

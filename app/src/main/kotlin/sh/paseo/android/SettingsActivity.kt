@@ -60,12 +60,14 @@ class SettingsActivity : ComponentActivity() {
                         SettingsScreen(
                             preference = preference,
                             onTheme = vm::setTheme,
+                            versionName = vm.appVersionName,
                             update = update,
                             onCheckUpdates = { vm.checkForPreviewUpdate() },
                             onInstallUpdate = vm::installPreviewUpdate,
                         )
                     }
                 }
+                PreviewUpdateDialog(vm)
             }
         }
     }
