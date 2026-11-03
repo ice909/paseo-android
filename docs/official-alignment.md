@@ -20,7 +20,7 @@
 - `fetch_workspaces_request`、`workspace_update`：工作区目录、空项目、分页、实时修改 / 移除。
 - `workspace.create.request`、`agent.create.request`：显式区分新工作区和已有工作区追加代理。支持目录和 branch-off worktree；创建配置保留模型、模式、初始提示词与幂等键。
 - `creation.subscribe.request`：遇到非终态回执时恢复创建状态。支持现代创建协议的主机按同一幂等键重试；旧版兼容路径不提供相同的完整保证。
-- `fetch_agents_request`、`agent.timeline.set_subscription.request`、`fetch_agent_timeline_request`：工作区内代理与按需时间线；切换代理释放原订阅。工作区归属优先使用 ID，相同目录的不同工作区不会混在一起。
+- `fetch_agents_request`、`agent.timeline.set_subscription.request`、`fetch_agent_timeline_request`：工作区内代理与按需时间线；历史按官方 40 条页面大小及完整轮次读取，切换代理释放原订阅。工作区归属优先使用 ID，相同目录的不同工作区不会混在一起。
 - `set_agent_model_request`、`set_agent_mode_request`、`list_commands_request`：代理设置与命令建议。
 - `agent_permission_response`：保留原始 input，在 `updatedInput.answers` 中按问题的 **header** 写入答案；多选用逗号空格连接标签，自定义单选答案替代标签。
 - 文件和终端直接使用工作区目录 / ID；没有代理的工作区也能使用，不构造假的代理记录。

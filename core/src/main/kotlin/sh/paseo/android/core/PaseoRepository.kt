@@ -12,6 +12,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     companion object {
         const val PCM_FORMAT = "audio/pcm;rate=16000;bits=16"
         const val MAX_DISPLAY_IMAGE_BYTES = 12 * 1024 * 1024
+        private const val TIMELINE_FETCH_PAGE_SIZE = 40
     }
     private val dispatcher = Dispatchers.Default.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -298,7 +299,8 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                 val subscription = socket.request("agent.timeline.set_subscription.request", "agentIds" to listOf(agentId))
                 timelineSubscription = subscription.string("subscriptionId").ifBlank { null }
                 val payload = socket.request("fetch_agent_timeline_request", "agentId" to agentId,
-                    "direction" to "tail", "limit" to 200, "projection" to "canonical")
+                    "direction" to "tail", "limit" to TIMELINE_FETCH_PAGE_SIZE,
+                    "projection" to "projected", "wholeTurns" to true)
                 if (state.value.host?.id == hostId && state.value.selectedAgentId == agentId) {
                     buffer.hydrate(payload)
                     payload["agent"]?.takeIf { it is JsonObject }?.let { upsert(wireJson.decodeFromJsonElement<Agent>(it)) }
@@ -339,7 +341,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         try {
             val payload = socket.request("fetch_agent_timeline_request", "agentId" to id,
                 "direction" to "before", "cursor" to jsonObject("epoch" to buffer.epoch, "seq" to seq),
-                "limit" to 200, "projection" to "canonical")
+                "limit" to TIMELINE_FETCH_PAGE_SIZE, "projection" to "projected", "wholeTurns" to true)
             if (state.value.selectedAgentId == id) { buffer.hydrate(payload); publishTimeline() }
         } finally { _state.update { it.copy(loadingTimeline = false) } }
     }
@@ -441,7 +443,8 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
 
     suspend fun historyTranscript(agentId: String): List<TimelineRow> {
         val result = socket.request("fetch_agent_timeline_request", "agentId" to agentId,
-            "direction" to "tail", "limit" to 200, "projection" to "canonical")
+            "direction" to "tail", "limit" to TIMELINE_FETCH_PAGE_SIZE,
+            "projection" to "projected", "wholeTurns" to true)
         return TimelineBuffer().apply { hydrate(result) }.rows()
     }
 
