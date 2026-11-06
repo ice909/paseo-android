@@ -32,7 +32,7 @@ LUCIDE = {
     'CircleDot':'circle-dot', 'GitPullRequest':'git-pull-request', 'MessageSquareCode':'message-square-code', 'Summary':'summary', 'Paperclip':'paperclip', 'ImagePlus':'image-plus', 'Maximize2':'maximize-2', 'Minimize2':'minimize-2',
     'Undo2':'undo-2', 'MessageSquare':'message-square', 'Layers':'layers', 'ListEnd':'list-end', 'Mic':'mic', 'Volume2':'volume-2', 'Pause':'pause', 'Play':'play',
     'Bot':'bot', 'Wrench':'wrench', 'MicVocal':'mic-vocal', 'ListTodo':'list-todo',
-    'History':'rotate-ccw-clock', 'Gauge':'gauge', 'CircleHelp':'circle-question-mark', 'EllipsisVertical':'ellipsis-vertical', 'SlidersHorizontal':'sliders-horizontal', 'CircleAlert':'circle-alert', 'Archive':'archive',
+    'History':'rotate-ccw-clock', 'Gauge':'gauge', 'CircleHelp':'circle-question-mark', 'EllipsisVertical':'ellipsis-vertical', 'Settings2':'settings-2', 'ChevronLeft':'chevron-left', 'SlidersHorizontal':'sliders-horizontal', 'CircleAlert':'circle-alert', 'Archive':'archive',
     'TriangleAlert':'triangle-alert', 'GitBranch':'git-branch', 'MessageCircle':'message-circle',
 }
 BRANDS = ['antigravity','claude','codex','copilot','kiro','minimax','omp','opencode','pi']

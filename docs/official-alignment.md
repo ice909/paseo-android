@@ -5,6 +5,7 @@
 | 官方界面 / 行为 | 原生实现 | 官方源码 |
 | --- | --- | --- |
 | 全部 8 个内置主题、系统跟随、本地保存、即时预览 | `appearance/`、`Theme.kt`、`AppearanceSettingsScreen.kt` | `styles/theme.ts`、`appearance/provider.tsx`、`screens/settings/appearance/` |
+| 会话排序：显示 → 排序底部菜单、默认创建时间倒序、最近提示词、手动长按拖动和本地保存；旧主机隐藏自动排序 | `SidebarPreferences.kt`、`WorkspaceSort.kt`、`WorkspaceSidebar.kt` | `components/sidebar/display-preferences/menu.tsx`、`projects/workspace-structure.ts`、`stores/sidebar-view-store.ts` |
 | 平铺项目和工作区侧栏 | `WorkspaceSidebar.kt` | `components/left-sidebar.tsx` |
 | 紧凑标题栏、代理切换菜单、独立资源面板 | `PaseoApp.kt` | `screens/workspace/workspace-screen.tsx`、`workspace-header-menu.tsx` |
 | 配置表单靠近底部输入区 | `NewWorkspaceScreen.kt`、`MessageComposer.kt` | `screens/new-workspace-screen.tsx` |

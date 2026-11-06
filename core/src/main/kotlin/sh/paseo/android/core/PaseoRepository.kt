@@ -94,7 +94,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                             fetchAgents(subscribe = true)
                             while (state.value.nextAgentCursor != null) fetchAgents(cursor = state.value.nextAgentCursor)
                         }
-                        launch { fetchWorkspaces(subscribe = true) }
+                        launch { fetchWorkspaceCatalog(subscribe = true) }
                         launch {
                             val result = socket.request("list_available_providers_request")
                             val providers = result.array("providers").map { wireJson.decodeFromJsonElement<Provider>(it) }
@@ -236,7 +236,17 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     }
 
     suspend fun refreshWorkspaces(loadMore: Boolean = false) = withContext(dispatcher) {
-        fetchWorkspaces(cursor = if (loadMore) state.value.nextWorkspaceCursor else null)
+        fetchWorkspaceCatalog(cursor = if (loadMore) state.value.nextWorkspaceCursor else null)
+    }
+    private suspend fun fetchWorkspaceCatalog(subscribe: Boolean = false, cursor: String? = null) {
+        fetchWorkspaces(subscribe, cursor)
+        // Sidebar sorting is local: include every page before treating the order as complete.
+        val visited = mutableSetOf<String>()
+        while (true) {
+            val next = state.value.nextWorkspaceCursor ?: break
+            check(visited.add(next)) { "工作区分页未前进，请重新连接主机" }
+            fetchWorkspaces(cursor = next)
+        }
     }
     private suspend fun fetchWorkspaces(subscribe: Boolean = false, cursor: String? = null) {
         val result = socket.request("fetch_workspaces_request",

@@ -1,6 +1,14 @@
 package sh.paseo.android.ui
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -48,7 +56,28 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
     var search by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var preferences by remember { mutableStateOf(false) }
-    var alphabetical by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val sidebarPreferences = remember { SidebarPreferences(context.applicationContext) }
+    val sortSupported = state.features.bool("workspaceSortTimes")
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var dragging by remember(state.host?.id) { mutableStateOf<String?>(null) }
+    val hostKey = state.serverId.ifBlank { state.host?.id.orEmpty() }
+    val sortedWorkspaces = state.workspaces.groupBy { it.projectId }.mapValues { (project, workspaces) ->
+        sortSidebarWorkspaces(workspaces, sidebarPreferences.sort, sortSupported, sidebarPreferences.order(hostKey, project))
+    }
+    val currentWorkspaces by rememberUpdatedState(state.workspaces)
+    val currentSorted by rememberUpdatedState(sortedWorkspaces)
+    fun move(from: String, to: String) {
+        val source = currentWorkspaces.find { it.id == from } ?: return
+        val target = currentWorkspaces.find { it.id == to } ?: return
+        if (source.projectId != target.projectId || (source.pinnedAt == null) != (target.pinnedAt == null)) return
+        val order = currentSorted[source.projectId].orEmpty().map { it.id }
+        val moved = moveSidebarWorkspace(order, from, to)
+        val hidden = sidebarPreferences.order(hostKey, source.projectId).filterNot { it in moved }
+        sidebarPreferences.reorder(hostKey, source.projectId, moved + hidden)
+    }
+    val moveCurrent by rememberUpdatedState(::move)
     var history by rememberSaveable { mutableStateOf(false) }
     var usage by rememberSaveable { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
@@ -80,26 +109,54 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
             HorizontalDivider(Modifier.padding(top = 6.dp), color = palette.border)
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp).height(44.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Workspaces", fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.weight(1f))
-                Box {
-                    SidebarIcon(PaseoIcons.SlidersHorizontal, "工作区显示设置", { preferences = true }, size = 16)
-                    PaseoDropdownMenu(expanded = preferences, onDismissRequest = { preferences = false }) {
-                        DropdownMenuItem(text = { Text("搜索工作区") }, onClick = { preferences = false; search = !search; if (!search) query = "" })
-                        DropdownMenuItem(text = { Text(if (alphabetical) "按最近活动排序" else "按项目名称排序") }, onClick = { alphabetical = !alphabetical; preferences = false })
-                        DropdownMenuItem(text = { Text("折叠所有项目") }, onClick = { state.projects.forEach { collapsed[it.projectId] = true }; preferences = false })
-                        DropdownMenuItem(text = { Text("展开所有项目") }, onClick = { collapsed.clear(); preferences = false })
-                        DropdownMenuItem(text = { Text("刷新工作区") }, enabled = state.connected, onClick = { preferences = false; onRefresh() })
-                    }
-                }
+                SidebarIcon(PaseoIcons.Settings2, "显示偏好", { preferences = true }, size = 14, touchSize = 28)
             }
             if (search) OutlinedTextField(query, { query = it }, placeholder = { Text("搜索项目或工作区") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp))
             if (!state.catalogLoaded) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 if (state.connected) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else Text("连接主机以读取工作区", fontSize = 12.sp)
-            } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                val projects = if (alphabetical) state.projects.sortedBy { it.projectDisplayName.lowercase() } else state.projects
+            } else LazyColumn(Modifier.weight(1f).pointerInput(sidebarPreferences.sort, hostKey) {
+                if (sidebarPreferences.sort != WorkspaceSort.Manual) return@pointerInput
+                var pointerY = 0f
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { offset ->
+                        pointerY = offset.y
+                        dragging = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                            offset.y >= it.offset && offset.y < it.offset + it.size
+                        }?.key?.toString()?.takeIf { it.startsWith("workspace:") }?.removePrefix("workspace:")
+                    },
+                    onDragEnd = { dragging = null }, onDragCancel = { dragging = null },
+                    onDrag = { change, amount ->
+                        val id = dragging
+                        if (id != null) {
+                            change.consume()
+                            pointerY += amount.y
+                            listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                pointerY >= it.offset && pointerY < it.offset + it.size
+                            }?.key?.toString()?.takeIf { it.startsWith("workspace:") }
+                                ?.removePrefix("workspace:")?.takeIf { it != id }?.let { target ->
+                                    val project = currentWorkspaces.find { it.id == id }?.projectId
+                                    val peers = currentSorted[project].orEmpty()
+                                    val from = peers.indexOfFirst { it.id == id }
+                                    val to = peers.indexOfFirst { it.id == target }
+                                    if ((amount.y > 0 && to > from) || (amount.y < 0 && to in 0 until from)) moveCurrent(id, target)
+                                }
+                            val edge = 48.dp.toPx()
+                            val end = listState.layoutInfo.viewportEndOffset
+                            val scroll = when {
+                                pointerY < edge -> -edge / 3
+                                pointerY > end - edge -> edge / 3
+                                else -> 0f
+                            }
+                            if (scroll != 0f) scope.launch { listState.scrollBy(scroll) }
+                        }
+                    },
+                )
+            }, state = listState, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+                val projects = state.projects.sortedBy { it.projectDisplayName.lowercase() }
                 projects.forEach { project ->
-                    val workspaces = filtered.filter { it.projectId == project.projectId }
+                    val workspaces = sortedWorkspaces[project.projectId].orEmpty().filter { workspace -> filtered.any { it.id == workspace.id } }
                     if (workspaces.isNotEmpty() || query.isBlank()) {
                         item("project:${project.projectId}") {
                             var menu by remember { mutableStateOf(false) }
@@ -125,8 +182,17 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                         if (collapsed[project.projectId] != true) {
                             items(workspaces, key = { "workspace:${it.id}" }) { workspace ->
                                 var menu by remember { mutableStateOf(false) }
-                                Row(Modifier.fillMaxWidth().background(if (workspace.id == state.selectedWorkspaceId) (if (palette.dark) palette.surface2 else palette.surface4) else Color.Transparent, RoundedCornerShape(8.dp))
-                                    .clickable { onOpen(workspace) }.padding(start = 8.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(Modifier.fillMaxWidth().background(if (workspace.id == state.selectedWorkspaceId || workspace.id == dragging) (if (palette.dark) palette.surface2 else palette.surface4) else Color.Transparent, RoundedCornerShape(8.dp))
+                                    .semantics {
+                                        if (sidebarPreferences.sort == WorkspaceSort.Manual) {
+                                            val peers = workspaces.filter { (it.pinnedAt == null) == (workspace.pinnedAt == null) }
+                                            val index = peers.indexOfFirst { it.id == workspace.id }
+                                            customActions = buildList {
+                                                if (index > 0) add(CustomAccessibilityAction("上移") { move(workspace.id, peers[index - 1].id); true })
+                                                if (index in 0 until peers.lastIndex) add(CustomAccessibilityAction("下移") { move(workspace.id, peers[index + 1].id); true })
+                                            }
+                                        }
+                                    }.clickable { onOpen(workspace) }.padding(start = 8.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { SidebarWorkspaceStatus(workspace.status, active) }
                                     Spacer(Modifier.width(8.dp))
                                     Text(workspace.name, Modifier.weight(1f).padding(vertical = 12.dp), fontSize = 14.sp, lineHeight = 20.sp, color = palette.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -164,6 +230,11 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
             }
         }
     }
+    if (preferences) SidebarPreferencesSheet(sidebarPreferences, sortSupported, state.connected,
+        onDismiss = { preferences = false },
+        onSearch = { search = !search; if (!search) query = "" },
+        onCollapse = { state.projects.forEach { collapsed[it.projectId] = true } },
+        onExpand = { collapsed.clear() }, onRefresh = onRefresh)
     if (history) SidebarHistory(vm, state, onDismiss = { history = false }, onOpen = { workspace, agent ->
         history = false; onOpen(workspace); vm.openAgent(agent)
     })
