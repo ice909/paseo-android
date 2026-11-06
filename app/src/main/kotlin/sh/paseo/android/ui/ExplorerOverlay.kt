@@ -19,7 +19,6 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -31,11 +30,23 @@ private fun panelAnimation() = tween<Float>(durationMillis = 220, easing = panel
 internal fun ExplorerOverlay(open: Boolean, enabled: Boolean, onOpen: () -> Unit, onClose: () -> Unit,
     workspace: @Composable () -> Unit, panel: @Composable () -> Unit) {
     val position = remember { Animatable(if (open) 1f else 0f) }
-    val scope = rememberCoroutineScope()
+    // Pointer updates are synchronous. Only the effect below owns the Animatable,
+    // so a queued drag update cannot cancel the release animation.
+    var dragPosition by remember { mutableStateOf<Float?>(null) }
+    var gestureActive by remember { mutableStateOf(false) }
+    var settleRevision by remember { mutableIntStateOf(0) }
+    val currentOnOpen by rememberUpdatedState(onOpen)
+    val currentOnClose by rememberUpdatedState(onClose)
     val density = LocalDensity.current.density
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
-    LaunchedEffect(open, enabled) {
+    LaunchedEffect(open, enabled, gestureActive, settleRevision) {
+        if (gestureActive && enabled) {
+            position.stop()
+            return@LaunchedEffect
+        }
+        dragPosition?.let { position.snapTo(it) }
+        dragPosition = null
         if (open && enabled) { keyboard?.hide(); focus.clearFocus() }
         position.animateTo(if (open && enabled) 1f else 0f, panelAnimation())
     }
@@ -50,39 +61,52 @@ internal fun ExplorerOverlay(open: Boolean, enabled: Boolean, onOpen: () -> Unit
                 var dragging = false
                 var cancelled = false
                 var delta = 0f
-                val initial = if (open) 1f else 0f
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Main)
-                    if (event.changes.count { it.pressed } > 1) { cancelled = true; break }
-                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    velocity.addPosition(change.uptimeMillis, change.position)
-                    delta = change.position.x - origin.x
-                    val vertical = change.position.y - origin.y
-                    if (!dragging) {
-                        val directed = if (open) delta else -delta
-                        if (change.isConsumed || directed < -10.dp.toPx() || (abs(vertical) > 10.dp.toPx() && abs(vertical) > abs(delta))) { cancelled = true; break }
-                        if (directed >= 15.dp.toPx() && abs(delta) > abs(vertical)) dragging = true
+                var initial = position.value
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        if (event.changes.count { it.pressed } > 1) { cancelled = true; break }
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null) { cancelled = true; break }
+                        velocity.addPosition(change.uptimeMillis, change.position)
+                        delta = change.position.x - origin.x
+                        val vertical = change.position.y - origin.y
+                        if (!dragging) {
+                            val directed = if (open) delta else -delta
+                            if (change.isConsumed || directed < -10.dp.toPx() || (abs(vertical) > 10.dp.toPx() && abs(vertical) > abs(delta))) { cancelled = true; break }
+                            if (directed >= 15.dp.toPx() && abs(delta) > abs(vertical)) {
+                                initial = dragPosition ?: position.value
+                                dragging = true
+                                gestureActive = true
+                            }
+                        }
+                        if (dragging) {
+                            change.consume()
+                            dragPosition = (initial - delta / width).coerceIn(0f, 1f)
+                        }
+                        if (!change.pressed) break
                     }
                     if (dragging) {
-                        change.consume()
-                        val next = (initial - delta / width).coerceIn(0f, 1f)
-                        scope.launch { position.snapTo(next) }
+                        val speed = velocity.calculateVelocity().x / density
+                        val switch = !cancelled && if (open) delta > width / 3f || speed > 500f else delta < -width / 3f || speed < -500f
+                        if (switch) { if (open) currentOnClose() else currentOnOpen() }
                     }
-                    if (!change.pressed) break
-                }
-                if (dragging) {
-                    val speed = velocity.calculateVelocity().x / density
-                    val switch = !cancelled && if (open) delta > width / 3f || speed > 500f else delta < -width / 3f || speed < -500f
-                    if (switch) { if (open) onClose() else onOpen() }
-                    else scope.launch { position.animateTo(if (open) 1f else 0f, panelAnimation()) }
+                } finally {
+                    // Includes Android ACTION_CANCEL and pointerInput restarts (size,
+                    // navigation or enabled changes). Always settle, even if open is unchanged.
+                    if (dragging) {
+                        gestureActive = false
+                        settleRevision++
+                    }
                 }
             }
         }
+        val visiblePosition = dragPosition ?: position.value
         Box(Modifier.fillMaxSize().then(gesture)) {
             Box(Modifier.fillMaxSize().then(if (open) Modifier.clearAndSetSemantics { } else Modifier)) { CompositionLocalProvider(LocalTimelineActive provides !open) { workspace() } }
-            if (enabled && (open || position.value > 0f)) {
+            if (enabled && (open || visiblePosition > 0f)) {
                 BackHandler(open, onBack = onClose)
-                Surface(Modifier.fillMaxSize().offset { IntOffset((width * (1f - position.value)).roundToInt(), 0) }
+                Surface(Modifier.fillMaxSize().offset { IntOffset((width * (1f - (dragPosition ?: position.value))).roundToInt(), 0) }
                     .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } },
                     color = LocalPaseoPalette.current.surfaceSidebar,
                     contentColor = LocalPaseoPalette.current.foreground) { panel() }

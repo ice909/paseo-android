@@ -101,6 +101,7 @@ python3 tools/android_smoke.py --reset --deny-lan-once
 | 模型与思考强度 | `--agent-controls --events-file /tmp/paseo-controls-events.jsonl` | `android_agent_controls_smoke.py --reset --events /tmp/paseo-controls-events.jsonl` |
 | 回复复制 | `--copy-actions --tool-presentation` | `android_copy_smoke.py --reset` |
 | 重启恢复会话 | `--events-file /tmp/paseo-restoration-events.jsonl` | 已保存模拟主机连接后运行 `android_restoration_smoke.py --events /tmp/paseo-restoration-events.jsonl` |
+| 右侧文件面板手势（已打开模拟会话） | `--sidebar` | `android_explorer_gesture_smoke.py`（短拖回弹、完整滑动、触摸取消和按钮开关；不清除数据） |
 | 侧栏与用量 | `--sidebar --events-file /tmp/paseo-sidebar-events.jsonl` | `android_sidebar_smoke.py --reset --events-file /tmp/paseo-sidebar-events.jsonl` |
 
 欢迎页脚本的 `--layout-only` 单独检查窄屏与横屏。侧栏模拟服务的 `--legacy-usage` / `--usage-unavailable` 分别配合 UI 脚本的 `--usage-only` / `--unavailable` 检查旧接口和未登录状态。其他专项脚本及参数见 [tools/](../tools/) 中各脚本的 `--help`。
