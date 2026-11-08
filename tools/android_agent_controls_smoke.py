@@ -58,8 +58,8 @@ def main():
     ui.node('High')
     ui.screenshot('thinking-options')
     ui.click('Low')
-    ui.node('模型设置')
-    ui.click('关闭模型设置', 'content-desc')
+    ui.node('选择模型')
+    ui.click('关闭选择模型', 'content-desc')
     ui.node('Low')
     requests = [json.loads(line)['message'] for line in Path(args.events).read_text().splitlines() if json.loads(line).get('type') == 'request']
     assert any(r.get('type') == 'set_agent_thinking_request' and r.get('thinkingOptionId') == 'low' for r in requests)
@@ -71,9 +71,9 @@ def main():
     ui.screenshot('rejected-effort')
     ui.click('模型')
     ui.click('Opus (fixture)')
-    ui.node('模型设置')
+    ui.node('选择模型')
     assert not any(n.get('text') == '思考强度' for n in ui.tree().iter('node'))
-    ui.click('关闭模型设置', 'content-desc')
+    ui.click('关闭选择模型', 'content-desc')
     ui.node('Opus (fixture)')
     print('default-model, reasoning RPC, rejection, model-without-reasoning: passed', flush=True)
 
@@ -113,9 +113,9 @@ def check_layout():
     ui.node('模型和思考强度', 'content-desc')
     ui.screenshot('ghostty-compact-header')
     ui.click('模型和思考强度', 'content-desc')
-    ui.node('模型设置')
+    ui.node('选择模型')
     ui.screenshot('ghostty-model-settings')
-    ui.click('关闭模型设置', 'content-desc')
+    ui.click('关闭选择模型', 'content-desc')
 
 
 if __name__ == '__main__':
