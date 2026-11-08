@@ -36,6 +36,8 @@ import kotlinx.coroutines.CancellationException
 import sh.paseo.android.AppViewModel
 import sh.paseo.android.core.*
 
+private const val INITIAL_PROJECT_WORKSPACE_LIMIT = 7
+
 @Composable
 fun sidebarColor(): Color = LocalPaseoPalette.current.surfaceSidebar
 
@@ -84,6 +86,7 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
     var edit by remember(state.host?.id) { mutableStateOf<Workspace?>(null) }
     var archive by remember(state.host?.id) { mutableStateOf<Workspace?>(null) }
     val collapsed = remember(state.host?.id) { mutableStateMapOf<String, Boolean>() }
+    val expandedWorkspaces = remember(state.host?.id) { mutableStateMapOf<String, Boolean>() }
     val clipboard = LocalClipboardManager.current
     val uri = LocalUriHandler.current
     val palette = LocalPaseoPalette.current
@@ -156,8 +159,13 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
             }, state = listState, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
                 val projects = state.projects.sortedBy { it.projectDisplayName.lowercase() }
                 projects.forEach { project ->
-                    val workspaces = sortedWorkspaces[project.projectId].orEmpty().filter { workspace -> filtered.any { it.id == workspace.id } }
-                    if (workspaces.isNotEmpty() || query.isBlank()) {
+                    val allWorkspaces = sortedWorkspaces[project.projectId].orEmpty().filter { workspace -> filtered.any { it.id == workspace.id } }
+                    val initiallyVisibleWorkspaces = allWorkspaces.filterIndexed { index, workspace ->
+                        index < INITIAL_PROJECT_WORKSPACE_LIMIT || workspace.status != "done"
+                    }
+                    val projectExpanded = expandedWorkspaces[project.projectId] == true
+                    val workspaces = if (projectExpanded) allWorkspaces else initiallyVisibleWorkspaces
+                    if (allWorkspaces.isNotEmpty() || query.isBlank()) {
                         item("project:${project.projectId}") {
                             var menu by remember { mutableStateOf(false) }
                             Row(Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -206,6 +214,28 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                                             DropdownMenuItem(text = { Text("复制工作目录") }, onClick = { menu = false; clipboard.setText(AnnotatedString(workspace.cwd)) })
                                             DropdownMenuItem(text = { Text("归档") }, enabled = state.connected, onClick = { menu = false; archive = workspace })
                                         }
+                                    }
+                                }
+                            }
+                            if (initiallyVisibleWorkspaces.size < allWorkspaces.size) {
+                                item("workspace-toggle:${project.projectId}") {
+                                    val label = if (projectExpanded) "收起" else "显示更多"
+                                    Row(
+                                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable {
+                                            expandedWorkspaces[project.projectId] = !projectExpanded
+                                        }.padding(start = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                                            PaseoGlyph(
+                                                if (projectExpanded) PaseoIcons.ChevronUp else PaseoIcons.ChevronDown,
+                                                null,
+                                                Modifier.size(16.dp),
+                                                tint = palette.foregroundMuted,
+                                            )
+                                        }
+                                        Text(label, fontSize = 14.sp, lineHeight = 20.sp, color = palette.foregroundMuted)
                                     }
                                 }
                             }

@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 全部 8 个内置主题、系统跟随、本地保存、即时预览 | `appearance/`、`Theme.kt`、`AppearanceSettingsScreen.kt` | `styles/theme.ts`、`appearance/provider.tsx`、`screens/settings/appearance/` |
 | 会话排序：显示 → 排序底部菜单、默认创建时间倒序、最近提示词、手动长按拖动和本地保存；旧主机隐藏自动排序 | `SidebarPreferences.kt`、`WorkspaceSort.kt`、`WorkspaceSidebar.kt` | `components/sidebar/display-preferences/menu.tsx`、`projects/workspace-structure.ts`、`stores/sidebar-view-store.ts` |
-| 平铺项目和工作区侧栏 | `WorkspaceSidebar.kt` | `components/left-sidebar.tsx` |
+| 平铺项目和工作区侧栏；每项目默认显示前 7 项并始终保留非完成项，支持显示更多 / 收起 | `WorkspaceSidebar.kt` | `components/left-sidebar.tsx`、`components/sidebar/use-limited-sidebar-group.ts`、`components/sidebar/sidebar-group-visibility.ts` |
 | 紧凑标题栏、代理切换菜单、独立资源面板 | `PaseoApp.kt` | `screens/workspace/workspace-screen.tsx`、`workspace-header-menu.tsx` |
 | 配置表单靠近底部输入区 | `NewWorkspaceScreen.kt`、`MessageComposer.kt` | `screens/new-workspace-screen.tsx` |
 | 用户消息块、助手正文、可展开工具行、停止 | `ChatScreen.kt`、`Markdown.kt` | 官方聊天和 composer 组件 |
