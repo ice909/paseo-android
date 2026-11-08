@@ -87,7 +87,7 @@ data class Workspace(
     val name: String, val title: String? = null, val status: String = "done",
     val pinnedAt: String? = null, val activityAt: String? = null,
     val gitRuntime: JsonObject? = null, val diffStat: JsonObject? = null, val projectKey: String? = null,
-    val createdAt: String? = null, val lastUserMessageAt: String? = null,
+    val createdAt: String? = null, val lastUserMessageAt: String? = null, val background: Boolean = false,
 ) {
     val cwd: String get() = workspaceDirectory ?: projectRootPath
     val context: WorkspaceContext get() = WorkspaceContext(id, cwd)

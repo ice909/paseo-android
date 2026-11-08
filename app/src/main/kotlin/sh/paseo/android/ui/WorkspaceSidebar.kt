@@ -100,6 +100,9 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
     val filtered = remember(state.workspaces, query) { state.workspaces.filter {
         "${it.name} ${it.projectDisplayName} ${it.cwd}".contains(query, true)
     } }
+    val selectedProjects = sidebarPreferences.projectFilters.intersect(state.projects.map { it.projectId }.toSet())
+    val visibleWorkspaces = filtered.filter { (sidebarPreferences.showBackground || !it.background) &&
+        (selectedProjects.isEmpty() || it.projectId in selectedProjects) }
     CompositionLocalProvider(LocalContentColor provides palette.foregroundMuted) {
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(8.dp))
@@ -119,8 +122,8 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
             if (!state.catalogLoaded) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 if (state.connected) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else Text("连接主机以读取工作区", fontSize = 12.sp)
-            } else LazyColumn(Modifier.weight(1f).pointerInput(sidebarPreferences.sort, hostKey) {
-                if (sidebarPreferences.sort != WorkspaceSort.Manual) return@pointerInput
+            } else LazyColumn(Modifier.weight(1f).pointerInput(sidebarPreferences.sort, sidebarPreferences.grouping, hostKey) {
+                if (sidebarPreferences.sort != WorkspaceSort.Manual || sidebarPreferences.grouping != "project") return@pointerInput
                 var pointerY = 0f
                 detectDragGesturesAfterLongPress(
                     onDragStart = { offset ->
@@ -157,94 +160,102 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                     },
                 )
             }, state = listState, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                val projects = state.projects.sortedBy { it.projectDisplayName.lowercase() }
-                projects.forEach { project ->
-                    val allWorkspaces = sortedWorkspaces[project.projectId].orEmpty().filter { workspace -> filtered.any { it.id == workspace.id } }
-                    val initiallyVisibleWorkspaces = allWorkspaces.filterIndexed { index, workspace ->
-                        index < INITIAL_PROJECT_WORKSPACE_LIMIT || workspace.status != "done"
-                    }
-                    val projectExpanded = expandedWorkspaces[project.projectId] == true
-                    val workspaces = if (projectExpanded) allWorkspaces else initiallyVisibleWorkspaces
-                    if (allWorkspaces.isNotEmpty() || query.isBlank()) {
-                        item("project:${project.projectId}") {
-                            var menu by remember { mutableStateOf(false) }
-                            Row(Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Row(Modifier.weight(1f).clickable { collapsed[project.projectId] = collapsed[project.projectId] != true }
-                                    .padding(start = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Box(Modifier.size(20.dp).background(Color(projectIdentityColor((projectMetadata[project.projectId] ?: project).identityKey(state.serverId))), RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
-                                        Text(project.projectDisplayName.take(1).uppercase(), fontSize = 12.sp, lineHeight = 16.sp, color = Color.White)
-                                    }
-                                    Text(project.projectDisplayName, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                                SidebarIcon(PaseoIcons.Plus, "在 ${project.projectDisplayName} 新建工作区", { onNew(project.projectId) }, size = 16)
-                                Box {
-                                    SidebarIcon(PaseoIcons.EllipsisVertical, "${project.projectDisplayName} 项目菜单", { menu = true }, size = 16)
-                                    PaseoDropdownMenu(menu, { menu = false }) {
-                                        DropdownMenuItem(text = { Text("新建工作区") }, onClick = { menu = false; onNew(project.projectId) })
-                                        DropdownMenuItem(text = { Text(if (collapsed[project.projectId] == true) "展开项目" else "折叠项目") }, onClick = { menu = false; collapsed[project.projectId] = collapsed[project.projectId] != true })
-                                        DropdownMenuItem(text = { Text("复制项目路径") }, onClick = { menu = false; clipboard.setText(AnnotatedString(project.projectRootPath)) })
-                                    }
-                                }
+                if (sidebarPreferences.grouping == "status") {
+                    val workspaceOrder = sortedWorkspaces.values.flatten()
+                        .filter { workspace -> visibleWorkspaces.any { it.id == workspace.id } }
+                    workspaceOrder.groupBy { it.status }.entries.sortedBy { statusGroupOrder(it.key) }
+                        .forEach { (status, workspaces) ->
+                            item("status:$status") {
+                                Text(statusGroupLabel(status), Modifier.padding(start = 8.dp, top = 12.dp, bottom = 8.dp),
+                                    fontSize = 14.sp, color = palette.foregroundMuted)
                             }
-                        }
-                        if (collapsed[project.projectId] != true) {
                             items(workspaces, key = { "workspace:${it.id}" }) { workspace ->
-                                var menu by remember { mutableStateOf(false) }
-                                Row(Modifier.fillMaxWidth().background(if (workspace.id == state.selectedWorkspaceId || workspace.id == dragging) (if (palette.dark) palette.surface2 else palette.surface4) else Color.Transparent, RoundedCornerShape(8.dp))
-                                    .semantics {
-                                        if (sidebarPreferences.sort == WorkspaceSort.Manual) {
-                                            val peers = workspaces.filter { (it.pinnedAt == null) == (workspace.pinnedAt == null) }
-                                            val index = peers.indexOfFirst { it.id == workspace.id }
-                                            customActions = buildList {
-                                                if (index > 0) add(CustomAccessibilityAction("上移") { move(workspace.id, peers[index - 1].id); true })
-                                                if (index in 0 until peers.lastIndex) add(CustomAccessibilityAction("下移") { move(workspace.id, peers[index + 1].id); true })
-                                            }
-                                        }
-                                    }.clickable { onOpen(workspace) }.padding(start = 8.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { SidebarWorkspaceStatus(workspace.status, active) }
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(workspace.name, Modifier.weight(1f).padding(vertical = 12.dp), fontSize = 14.sp, lineHeight = 20.sp, color = palette.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (workspace.pinnedAt != null) PaseoGlyph(PaseoIcons.Pin, "已固定", Modifier.size(12.dp))
-                                    Box {
-                                        SidebarIcon(PaseoIcons.EllipsisVertical, "${workspace.name} 工作区菜单", { menu = true }, size = 16)
-                                        PaseoDropdownMenu(menu, { menu = false }) {
-                                            DropdownMenuItem(text = { Text("重命名") }, enabled = state.connected, onClick = { menu = false; edit = workspace })
-                                            DropdownMenuItem(text = { Text(if (workspace.pinnedAt == null) "固定" else "取消固定") }, enabled = state.connected,
-                                                onClick = { menu = false; vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } })
-                                            DropdownMenuItem(text = { Text("复制工作目录") }, onClick = { menu = false; clipboard.setText(AnnotatedString(workspace.cwd)) })
-                                            DropdownMenuItem(text = { Text("归档") }, enabled = state.connected, onClick = { menu = false; archive = workspace })
-                                        }
-                                    }
-                                }
-                            }
-                            if (initiallyVisibleWorkspaces.size < allWorkspaces.size) {
-                                item("workspace-toggle:${project.projectId}") {
-                                    val label = if (projectExpanded) "收起" else "显示更多"
-                                    Row(
-                                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable {
-                                            expandedWorkspaces[project.projectId] = !projectExpanded
-                                        }.padding(start = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    ) {
-                                        Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-                                            PaseoGlyph(
-                                                if (projectExpanded) PaseoIcons.ChevronUp else PaseoIcons.ChevronDown,
-                                                null,
-                                                Modifier.size(16.dp),
-                                                tint = palette.foregroundMuted,
-                                            )
-                                        }
-                                        Text(label, fontSize = 14.sp, lineHeight = 20.sp, color = palette.foregroundMuted)
-                                    }
-                                }
+                                SidebarWorkspaceRow(workspace, workspace.id == state.selectedWorkspaceId, workspace.id == dragging,
+                                    workspaceTitle(workspace, sidebarPreferences.titleSource),
+                                    workspaceDetails(workspace, sidebarPreferences.rowItems, state.host?.displayName),
+                                    active, sidebarPreferences.sort, emptyList(), onOpen,
+                                    onRename = { edit = workspace },
+                                    onPin = { vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } },
+                                    onCopyPath = { clipboard.setText(AnnotatedString(workspace.cwd)) },
+                                    onArchive = { archive = workspace }, connected = state.connected)
                             }
                         }
-                        item("space:${project.projectId}") { Spacer(Modifier.height(16.dp)) }
+                } else {
+                    val projects = state.projects
+                        .filter { selectedProjects.isEmpty() || it.projectId in selectedProjects }
+                        .sortedBy { it.projectDisplayName.lowercase() }
+                    projects.forEach { project ->
+                        val allWorkspaces = sortedWorkspaces[project.projectId].orEmpty()
+                            .filter { workspace -> visibleWorkspaces.any { it.id == workspace.id } }
+                        val initiallyVisibleWorkspaces = allWorkspaces.filterIndexed { index, workspace ->
+                            index < INITIAL_PROJECT_WORKSPACE_LIMIT || workspace.status != "done"
+                        }
+                        val projectExpanded = expandedWorkspaces[project.projectId] == true
+                        val workspaces = if (projectExpanded) allWorkspaces else initiallyVisibleWorkspaces
+                        if (allWorkspaces.isNotEmpty() || query.isBlank()) {
+                            item("project:${project.projectId}") {
+                                var menu by remember { mutableStateOf(false) }
+                                Row(Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Row(Modifier.weight(1f).clickable { collapsed[project.projectId] = collapsed[project.projectId] != true }
+                                        .padding(start = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(Modifier.size(20.dp).background(Color(projectIdentityColor((projectMetadata[project.projectId] ?: project).identityKey(state.serverId))), RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
+                                            Text(project.projectDisplayName.take(1).uppercase(), fontSize = 12.sp, lineHeight = 16.sp, color = Color.White)
+                                        }
+                                        Text(project.projectDisplayName, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    SidebarIcon(PaseoIcons.Plus, "在 ${project.projectDisplayName} 新建工作区", { onNew(project.projectId) }, size = 16)
+                                    Box {
+                                        SidebarIcon(PaseoIcons.EllipsisVertical, "${project.projectDisplayName} 项目菜单", { menu = true }, size = 16)
+                                        PaseoDropdownMenu(menu, { menu = false }) {
+                                            DropdownMenuItem(text = { Text("新建工作区") }, onClick = { menu = false; onNew(project.projectId) })
+                                            DropdownMenuItem(text = { Text(if (collapsed[project.projectId] == true) "展开项目" else "折叠项目") }, onClick = { menu = false; collapsed[project.projectId] = collapsed[project.projectId] != true })
+                                            DropdownMenuItem(text = { Text("复制项目路径") }, onClick = { menu = false; clipboard.setText(AnnotatedString(project.projectRootPath)) })
+                                        }
+                                    }
+                                }
+                            }
+                            if (collapsed[project.projectId] != true) {
+                                items(workspaces, key = { "workspace:${it.id}" }) { workspace ->
+                                    val peers = workspaces.filter { (it.pinnedAt == null) == (workspace.pinnedAt == null) }
+                                    SidebarWorkspaceRow(workspace, workspace.id == state.selectedWorkspaceId, workspace.id == dragging,
+                                        workspaceTitle(workspace, sidebarPreferences.titleSource),
+                                        workspaceDetails(workspace, sidebarPreferences.rowItems, state.host?.displayName),
+                                        active, sidebarPreferences.sort, peers, onOpen,
+                                        onMove = ::move,
+                                        onRename = { edit = workspace },
+                                        onPin = { vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } },
+                                        onCopyPath = { clipboard.setText(AnnotatedString(workspace.cwd)) },
+                                        onArchive = { archive = workspace }, connected = state.connected)
+                                }
+                                if (initiallyVisibleWorkspaces.size < allWorkspaces.size) {
+                                    item("workspace-toggle:${project.projectId}") {
+                                        val label = if (projectExpanded) "收起" else "显示更多"
+                                        Row(
+                                            Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable {
+                                                expandedWorkspaces[project.projectId] = !projectExpanded
+                                            }.padding(start = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                                                PaseoGlyph(
+                                                    if (projectExpanded) PaseoIcons.ChevronUp else PaseoIcons.ChevronDown,
+                                                    null,
+                                                    Modifier.size(16.dp),
+                                                    tint = palette.foregroundMuted,
+                                                )
+                                            }
+                                            Text(label, fontSize = 14.sp, lineHeight = 20.sp, color = palette.foregroundMuted)
+                                        }
+                                    }
+                                }
+                            }
+                            item("space:${project.projectId}") { Spacer(Modifier.height(16.dp)) }
+                        }
                     }
                 }
                 if (state.projects.isEmpty()) item { Text("还没有项目", Modifier.padding(16.dp), fontSize = 14.sp) }
-                if (query.isNotBlank() && filtered.isEmpty()) item { Text("没有匹配的工作区", Modifier.padding(16.dp), fontSize = 14.sp) }
+                if (query.isNotBlank() && visibleWorkspaces.isEmpty()) item { Text("没有匹配的工作区", Modifier.padding(16.dp), fontSize = 14.sp) }
                 if (state.nextWorkspaceCursor != null) item { TextButton(onClick = onMore, modifier = Modifier.fillMaxWidth()) { Text("加载更多工作区") } }
             }
             HorizontalDivider(color = palette.border)
@@ -260,11 +271,9 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
             }
         }
     }
-    if (preferences) SidebarPreferencesSheet(sidebarPreferences, sortSupported, state.connected,
-        onDismiss = { preferences = false },
-        onSearch = { search = !search; if (!search) query = "" },
-        onCollapse = { state.projects.forEach { collapsed[it.projectId] = true } },
-        onExpand = { collapsed.clear() }, onRefresh = onRefresh)
+    if (preferences) SidebarPreferencesSheet(sidebarPreferences,
+        projects = state.projects.map { it.projectId to it.projectDisplayName }.distinctBy { it.first }.sortedBy { it.second.lowercase() },
+        automaticSortSupported = sortSupported, onDismiss = { preferences = false })
     if (history) SidebarHistory(vm, state, onDismiss = { history = false }, onOpen = { workspace, agent ->
         history = false; onOpen(workspace); vm.openAgent(agent)
     })
@@ -284,6 +293,92 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
         text = { Text("在主机上运行 Paseo，复制配对链接到管理主机页。侧栏可新建工作区、查看历史会话，以及查看主机账户的用量。") },
         confirmButton = { TextButton(onClick = { help = false; uri.openUri("https://paseo.sh") }) { Text("打开官网") } },
         dismissButton = { TextButton(onClick = { help = false }) { Text("关闭") } })
+}
+
+@Composable
+private fun SidebarWorkspaceRow(
+    workspace: Workspace,
+    selected: Boolean,
+    dragging: Boolean,
+    title: String,
+    details: String,
+    active: Boolean,
+    sort: WorkspaceSort,
+    peers: List<Workspace>,
+    onOpen: (Workspace) -> Unit,
+    onMove: ((String, String) -> Unit)? = null,
+    onRename: () -> Unit,
+    onPin: () -> Unit,
+    onCopyPath: () -> Unit,
+    onArchive: () -> Unit,
+    connected: Boolean,
+) {
+    val palette = LocalPaseoPalette.current
+    var menu by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth()
+            .background(if (selected || dragging) (if (palette.dark) palette.surface2 else palette.surface4) else Color.Transparent, RoundedCornerShape(8.dp))
+            .semantics {
+                if (sort == WorkspaceSort.Manual && onMove != null) {
+                    val index = peers.indexOfFirst { it.id == workspace.id }
+                    customActions = buildList {
+                        if (index > 0) add(CustomAccessibilityAction("上移") { onMove(workspace.id, peers[index - 1].id); true })
+                        if (index in 0 until peers.lastIndex) add(CustomAccessibilityAction("下移") { onMove(workspace.id, peers[index + 1].id); true })
+                    }
+                }
+            }
+            .clickable { onOpen(workspace) }
+            .padding(start = 8.dp)
+            .heightIn(min = if (details.isBlank()) 44.dp else 56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { SidebarWorkspaceStatus(workspace.status, active) }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+            Text(title, fontSize = 14.sp, lineHeight = 20.sp, color = palette.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (details.isNotBlank()) Text(details, fontSize = 11.sp, lineHeight = 14.sp, color = palette.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (workspace.pinnedAt != null) PaseoGlyph(PaseoIcons.Pin, "已固定", Modifier.size(12.dp))
+        Box {
+            SidebarIcon(PaseoIcons.EllipsisVertical, "${workspace.name} 工作区菜单", { menu = true }, size = 16)
+            PaseoDropdownMenu(menu, { menu = false }) {
+                DropdownMenuItem(text = { Text("重命名") }, enabled = connected, onClick = { menu = false; onRename() })
+                DropdownMenuItem(text = { Text(if (workspace.pinnedAt == null) "固定" else "取消固定") }, enabled = connected,
+                    onClick = { menu = false; onPin() })
+                DropdownMenuItem(text = { Text("复制工作目录") }, onClick = { menu = false; onCopyPath() })
+                DropdownMenuItem(text = { Text("归档") }, enabled = connected, onClick = { menu = false; onArchive() })
+            }
+        }
+    }
+}
+
+private fun workspaceTitle(workspace: Workspace, source: String): String =
+    if (source == "branch") workspace.gitRuntime?.string("branch")?.takeIf { it.isNotBlank() } ?: workspace.title ?: workspace.name
+    else workspace.title?.takeIf { it.isNotBlank() } ?: workspace.name
+
+private fun workspaceDetails(workspace: Workspace, items: Set<String>, hostName: String?): String =
+    buildList {
+        if ("branch" in items) workspace.gitRuntime?.string("branch")?.takeIf { it.isNotBlank() }?.let(::add)
+        if ("project" in items) add(workspace.projectDisplayName)
+        if ("host" in items) hostName?.takeIf { it.isNotBlank() }?.let(::add)
+    }.distinct().joinToString(" · ")
+
+private fun statusGroupOrder(status: String): Int = when (status) {
+    "needs_input" -> 0
+    "failed" -> 1
+    "ready_to_review" -> 2
+    "running", "loading" -> 3
+    "done" -> 4
+    else -> 5
+}
+
+private fun statusGroupLabel(status: String): String = when (status) {
+    "needs_input" -> "需要输入"
+    "failed" -> "失败"
+    "ready_to_review" -> "待查看"
+    "running", "loading" -> "运行中"
+    "done" -> "已完成"
+    else -> "其他"
 }
 
 @Composable
