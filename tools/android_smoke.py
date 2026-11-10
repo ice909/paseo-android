@@ -111,13 +111,13 @@ def open_appearance():
             settings = next((n for n in nodes if (n.get("text") == "设置" or n.get("content-desc") == "设置")), None)
             if settings is not None:
                 tap(settings)
-                node("外观")
+                node("主题")
                 return
             menu = next((n for n in nodes if n.get("content-desc") == "打开侧栏"), None)
             if menu is not None:
                 tap(menu)
                 click("设置", "content-desc")
-                node("外观")
+                node("主题")
                 return
         except (ET.ParseError, subprocess.CalledProcessError):
             pass
@@ -222,7 +222,7 @@ def main():
     click("Plan")
     node("Plan")
     screenshot("agent-options")
-    click("关闭模型设置", "content-desc")
+    click("关闭选择模型", "content-desc")
     fill(0, "Check streaming")
     click("发送消息", "content-desc")
     hide_keyboard()

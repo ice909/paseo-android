@@ -43,15 +43,20 @@ def replace(value):
 
 
 def long_press(description):
+    ui.hide_keyboard()
     target = ui.node(description, 'content-desc')
     x1, y1, x2, y2 = map(int, re.findall(r'\d+', target.get('bounds')))
     x, y = str((x1+x2)//2), str((y1+y2)//2)
-    ui.adb('shell', 'input', 'swipe', x, y, x, y, '850')
+    ui.adb('shell', 'input', 'swipe', x, y, x, y, '1200')
 
 
 def menu():
     ui.hide_keyboard()
-    ui.click('添加附件和发送选项', 'content-desc')
+    ui.click('添加附件', 'content-desc')
+    labels = {node.get('text', '') for node in ui.tree().iter('node')}
+    assert {'添加图片', '添加 issue 或 PR', '添加文件'} <= labels
+    assert not labels.intersection({'语音对话', '完整显示', '折叠工具调用', '折叠已完成的对话过程',
+                                    '引导当前任务', '中断并发送', '加入队列'})
 
 
 def stop():
@@ -99,12 +104,14 @@ def main():
     assert messages('send_agent_message_request')[-1]['activeTurnBehavior'] == 'steer'
     replace('hold queued')
     long_press('发送消息')
+    ui.click('排队发送')
     ui.hide_keyboard()
     ui.node('编辑排队消息', 'content-desc')
     ui.screenshot('queue')
     ui.click('编辑排队消息', 'content-desc')
     assert text().lower() == 'hold queued'
     long_press('发送消息')
+    ui.click('排队发送')
     stop()
     wait_until(lambda: any(m.get('text', '').lower() == 'hold queued' for m in messages('send_agent_message_request')), 'Queue did not drain')
     ui.node('停止生成', 'content-desc')
@@ -149,7 +156,7 @@ def main():
     assert len(messages('send_agent_message_request')) == before
     assert '\n' in text()
     replace('')
-    menu(); ui.click('Issue / Pull Request')
+    menu(); ui.click('添加 issue 或 PR')
     ui.node('#42 Fixture issue')
     ui.click('#42 Fixture issue')
     ui.node('#42 Fixture issue')
@@ -174,7 +181,7 @@ def main():
     wait_until(lambda: text() == 'Dictation fixture transcript', 'Transcript was not appended')
     ui.screenshot('dictation-transcript')
     replace('')
-    menu(); ui.click('语音对话')
+    long_press('语音输入')
     ui.node('静音')
     wait_until(lambda: any(m.get('id') == 'voice-fixture' for m in messages('audio_played')), 'Voice playback acknowledgement missing')
     ui.click('静音'); ui.node('取消静音'); ui.click('取消静音')

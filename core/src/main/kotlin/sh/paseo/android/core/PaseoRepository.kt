@@ -170,7 +170,11 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
 
     suspend fun verifyConnection(timeoutMs: Long = 3_000) {
         val token = socket.connectionToken()
-        if (state.value.connection != ConnectionStatus.Connected || !socket.connected.value) return
+        if (state.value.connection != ConnectionStatus.Connected) return
+        if (!socket.connected.value) {
+            reconnectIfCurrentConnectionFailed(token)
+            return
+        }
         try {
             socket.ping(timeoutMs = timeoutMs, expectedGeneration = token)
         } catch (_: TimeoutCancellationException) {
@@ -187,10 +191,10 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
         val current = state.value
         if (current.connection == ConnectionStatus.Connected &&
             current.host != null &&
-            socket.connectionToken() == token &&
-            socket.connected.value) {
+            socket.connectionToken() == token) {
             _state.update { it.copy(connection = ConnectionStatus.Reconnecting, loadingTimeline = true) }
             socket.disconnect()
+            reconnectRequests.trySend(Unit)
         }
     }
     fun clearError() { _state.update { it.copy(error = null) } }

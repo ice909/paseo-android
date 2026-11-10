@@ -105,7 +105,8 @@ class PaseoRepositoryTest {
                 webSocket.send(DaemonSocketTest.session(type, payload))
             }
         }))
-        val repository = PaseoRepository()
+        val socket = DaemonSocket()
+        val repository = PaseoRepository(socket)
         try {
             val host = Host(id = "test-host", name = "Test", url = server.url("/ws").toString())
             repository.connect(
@@ -115,6 +116,7 @@ class PaseoRepositoryTest {
             withTimeout(5_000) {
                 repository.state.first { it.connection == ConnectionStatus.Connected && it.selectedAgentId == "agent1" }
             }
+            socket.disconnect()
             repository.verifyConnection(timeoutMs = 50)
             withTimeout(5_000) { repository.state.first { it.connection == ConnectionStatus.Reconnecting } }
             val recovered = repository.state.value

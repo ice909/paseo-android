@@ -110,9 +110,11 @@ def main():
     ui.node('git status --short')
     ui.node('app/Main.kt')
     ui.screenshot('expanded-turn-individual-tools')
-    # Disable the default turn collapse to check a standalone mobile detail sheet.
-    ui.click('添加附件和发送选项', 'content-desc')
-    ui.click('折叠已完成的对话过程')
+    # Disable turn collapse to check a standalone mobile detail sheet.
+    ui.open_appearance()
+    ui.tap(ui.node('聊天显示：', 'content-desc', contains=True))
+    ui.click('完整显示')
+    ui.adb('shell', 'input', 'keyevent', '4')
     assert not any(n.get('content-desc') == '关闭工具详情' for n in ui.tree().iter('node')), 'Display mode change opened a stale detail sheet'
     target = ui.node('sleep 30')
     ui.tap(target)

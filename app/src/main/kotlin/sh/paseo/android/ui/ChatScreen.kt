@@ -247,10 +247,32 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
             behavior = activeBehavior, modEnter = modEnter, cancelling = session.cancelling, hasAttachments = session.draft.attachments.isNotEmpty(),
             expanded = expanded, onExpand = { onFullscreenChange(!expanded) }, modifier = if (expanded) Modifier.weight(1f) else Modifier,
             onReceiveFiles = { vm.attachFiles(key, it) }, readSentMessages = { rows.asReversed().filter { it.type == "user_message" && it.text.isNotBlank() }.map { it.text } }, cursorRequest = cursorRequest, onSelection = { cursor = it },
-            trailingControls = { IconButton(onClick = { if (audio.mode == "voice") vm.audio.mute() else if (!audio.active) startAudio(false) }, enabled = state.connected && !importing && audio.mode != "dictation", modifier = Modifier.size(32.dp)) { PaseoGlyph(PaseoIcons.Mic, if (audio.mode == "voice") "切换麦克风静音" else "语音输入", Modifier.size(18.dp), if (audio.active) LocalPaseoPalette.current.accent else LocalPaseoPalette.current.foregroundMuted) } },
+            trailingControls = {
+                val voiceButtonEnabled = state.connected && !importing && audio.mode != "dictation"
+                Box(
+                    Modifier.size(32.dp).clip(CircleShape)
+                        .combinedClickable(
+                            enabled = voiceButtonEnabled,
+                            role = Role.Button,
+                            onClick = { if (audio.mode == "voice") vm.audio.mute() else if (!audio.active) startAudio(false) },
+                            onLongClickLabel = "语音对话",
+                            onLongClick = { if (!audio.active) startAudio(true) },
+                        )
+                        .semantics {
+                            contentDescription = if (audio.mode == "voice") "切换麦克风静音" else "语音输入"
+                            if (!voiceButtonEnabled) disabled()
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    PaseoGlyph(PaseoIcons.Mic, modifier = Modifier.size(18.dp), tint = if (audio.active) LocalPaseoPalette.current.accent else LocalPaseoPalette.current.foregroundMuted)
+                }
+            },
             attachments = { ChatAttachmentTray(session.draft.attachments) { vm.conversations.removeAttachment(key, it) } }, scrollOptions = false, options = {
-                ChatComposerMenu(behavior, vm::setSendBehavior, { picker.launch(arrayOf("*/*")) }, { picker.launch(arrayOf("image/*")) }, { startAudio(true) }, { forgePicker = true },
-                    displayMode, vm::setConversationDisplayMode)
+                ChatComposerMenu(
+                    onImages = { picker.launch(arrayOf("image/*")) },
+                    onForge = { forgePicker = true },
+                    onFiles = { picker.launch(arrayOf("*/*")) },
+                )
                 CompactAgentControls(agent, models, enabled = state.connected && !setting,
                     loading = loadingModels, modelError = modelError, actionError = controlError, onRetry = { modelRetry++ }, modifier = Modifier.weight(1f),
                     onModel = { model -> updateControl { vm.repository.setModel(agent.id, model) } },

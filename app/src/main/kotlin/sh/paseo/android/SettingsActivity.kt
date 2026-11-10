@@ -34,6 +34,8 @@ class SettingsActivity : ComponentActivity() {
         })
         setContent {
             val preference by vm.theme.collectAsStateWithLifecycle()
+            val sendBehavior by vm.sendBehavior.collectAsStateWithLifecycle()
+            val conversationDisplayMode by vm.conversationDisplayMode.collectAsStateWithLifecycle()
             val update by vm.previewUpdateState.collectAsStateWithLifecycle()
             PaseoTheme(preference) {
                 val palette = LocalPaseoPalette.current
@@ -60,6 +62,10 @@ class SettingsActivity : ComponentActivity() {
                         SettingsScreen(
                             preference = preference,
                             onTheme = vm::setTheme,
+                            sendBehavior = sendBehavior,
+                            onSendBehavior = vm::setSendBehavior,
+                            conversationDisplayMode = conversationDisplayMode,
+                            onConversationDisplayMode = vm::setConversationDisplayMode,
                             versionName = vm.appVersionName,
                             update = update,
                             onCheckUpdates = { vm.checkForPreviewUpdate() },

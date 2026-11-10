@@ -13,15 +13,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import sh.paseo.android.appearance.ThemePreference
+import sh.paseo.android.core.ConversationDisplayMode
+import sh.paseo.android.core.SendBehavior
 import sh.paseo.android.data.PreviewUpdateState
 
 @Composable
 fun SettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Unit,
+    sendBehavior: SendBehavior, onSendBehavior: (SendBehavior) -> Unit,
+    conversationDisplayMode: ConversationDisplayMode, onConversationDisplayMode: (ConversationDisplayMode) -> Unit,
     versionName: String, update: PreviewUpdateState, onCheckUpdates: () -> Unit, onInstallUpdate: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -53,6 +58,18 @@ fun SettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Un
             }
             HorizontalDivider(color = LocalPaseoPalette.current.border)
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("聊天与发送", style = MaterialTheme.typography.titleSmall)
+                SettingsChoiceRow("默认发送", sendBehavior, SendBehavior.entries, SendBehavior::label, onSendBehavior)
+                SettingsChoiceRow(
+                    "聊天显示",
+                    conversationDisplayMode,
+                    ConversationDisplayMode.entries,
+                    ::conversationDisplayModeLabel,
+                    onConversationDisplayMode,
+                )
+            }
+            HorizontalDivider(color = LocalPaseoPalette.current.border)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("预览", style = MaterialTheme.typography.titleSmall)
                 AppearancePreview()
             }
@@ -79,6 +96,45 @@ fun SettingsScreen(preference: ThemePreference, onTheme: (ThemePreference) -> Un
             }
         }
     }
+}
+
+@Composable
+private fun <T> SettingsChoiceRow(
+    label: String,
+    value: T,
+    options: List<T>,
+    optionLabel: (T) -> String,
+    onChoose: (T) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.semantics { contentDescription = "$label：${optionLabel(value)}" },
+            ) {
+                Text(optionLabel(value), Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                PaseoGlyph(PaseoIcons.ChevronDown, null, Modifier.size(16.dp))
+            }
+            PaseoDropdownMenu(expanded, { expanded = false }, modifier = Modifier.widthIn(min = 200.dp)) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(optionLabel(option)) },
+                        trailingIcon = { if (option == value) PaseoGlyph(PaseoIcons.Check, "已选择", Modifier.size(18.dp)) },
+                        onClick = { onChoose(option); expanded = false },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun conversationDisplayModeLabel(mode: ConversationDisplayMode) = when (mode) {
+    ConversationDisplayMode.Full -> "完整显示"
+    ConversationDisplayMode.CollapseToolCalls -> "折叠工具调用"
+    ConversationDisplayMode.CollapseTurns -> "折叠已完成的对话过程"
 }
 
 @Composable
