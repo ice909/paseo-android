@@ -92,19 +92,28 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     coroutineScope {
                         launch {
                             fetchAgents(subscribe = true)
-                            while (state.value.nextAgentCursor != null) fetchAgents(cursor = state.value.nextAgentCursor)
+                            val visited = mutableSetOf<String>()
+                            while (true) {
+                                val cursor = state.value.nextAgentCursor ?: break
+                                check(visited.add(cursor)) { "会话分页未前进，请重新连接主机" }
+                                fetchAgents(cursor = cursor)
+                            }
                         }
                         launch { fetchWorkspaceCatalog(subscribe = true) }
-                        launch {
-                            val result = socket.request("list_available_providers_request")
-                            val providers = result.array("providers").map { wireJson.decodeFromJsonElement<Provider>(it) }
-                            _state.update { it.copy(providers = providers) }
-                        }
                     }
                     if (state.value.restoringWorkspace != null) restoreWorkspace()
                     else state.value.selectedAgentId?.let { selectAgent(it) }
                     attempt = 0
                     coroutineScope {
+                        // Provider discovery can probe installed CLIs. It must not gate restoration
+                        // or tear down an authenticated connection when a provider probe fails.
+                        launch {
+                            try {
+                                val result = socket.request("list_available_providers_request")
+                                val providers = result.array("providers").map { wireJson.decodeFromJsonElement<Provider>(it) }
+                                _state.update { it.copy(providers = providers) }
+                            } catch (error: Exception) { report(error) }
+                        }
                         val localProbe = if (activeHost.relay != null && !host.directUrl.isNullOrBlank()) launch {
                             while (isActive) {
                                 delay(30_000)
@@ -146,7 +155,6 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                 _state.update { it.copy(
                     connection = ConnectionStatus.Reconnecting,
                     loadingTimeline = it.selectedAgentId != null,
-                    error = null,
                 ) }
                 withTimeoutOrNull(min(30_000L, 1_000L shl min(attempt++, 5))) {
                     reconnectRequests.receive()

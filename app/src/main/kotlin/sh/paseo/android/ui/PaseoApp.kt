@@ -346,6 +346,7 @@ private fun RestoringWorkspace(state: PaseoState, onBack: () -> Unit, onHosts: (
             ConnectionStatus.Disconnected -> "主机未连接。连接后将继续恢复，你也可以选择其他主机。"
             else -> "正在连接 ${state.host?.displayName.orEmpty()}，连接成功后将继续恢复。"
         }, color = LocalPaseoPalette.current.foregroundMuted)
+        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = onBack) { Text("返回工作区") }
             TextButton(onClick = onHosts) { Text("管理主机") }

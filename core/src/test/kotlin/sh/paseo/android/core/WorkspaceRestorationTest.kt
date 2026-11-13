@@ -15,6 +15,8 @@ class WorkspaceRestorationTest {
         val archivedAgent: Boolean = false,
         val emptyWorkspace: Boolean = false,
         val holdAgents: Boolean = false,
+        val holdProviders: Boolean = false,
+        val failProviders: Boolean = false,
     ) : AutoCloseable {
         val requests = CopyOnWriteArrayList<JsonObject>()
         val heldAgents = CompletableDeferred<Pair<WebSocket, JsonObject>>()
@@ -33,6 +35,7 @@ class WorkspaceRestorationTest {
                     }
                     val message = frame.obj("message")
                     requests.add(message)
+                    if (holdProviders && message.string("type") == "list_available_providers_request") return
                     if (holdAgents && message.string("type") == "fetch_agents_request" &&
                         message.obj("page").string("cursor") == "agents-2") {
                         heldAgents.complete(webSocket to message)
@@ -55,6 +58,7 @@ class WorkspaceRestorationTest {
                         else if (secondPage) listOf(agent("saved")) else listOf(agent("first"), agent("other", "w1")))
                         .map { jsonObject("agent" to it) },
                     "pageInfo" to jsonObject("nextCursor" to if (secondPage) null else "agents-2"))
+                "list_available_providers_request" -> if (failProviders) jsonObject("error" to "Provider probe failed") else jsonObject()
                 "agent.timeline.set_subscription.request" -> jsonObject("subscriptionId" to "timeline")
                 "fetch_agent_timeline_request" -> jsonObject("epoch" to "e1", "entries" to listOf(
                     jsonObject("seqStart" to 1, "item" to jsonObject("type" to "assistant_message", "text" to message.string("agentId")))))
@@ -86,6 +90,28 @@ class WorkspaceRestorationTest {
             assertEquals("saved", restored.timeline.single().text)
             assertEquals(listOf("saved"), f.requests.filter { it.string("type") == "fetch_agent_timeline_request" }.map { it.string("agentId") })
             assertTrue(f.requests.any { it.obj("page").string("cursor") == "workspaces-2" })
+            f.assertReadOnly()
+        }
+    }
+
+    @Test fun slowProviderDiscoveryDoesNotBlockRestoration() = runBlocking {
+        Fixture(holdProviders = true).use { f ->
+            f.repository.connect(f.host, f.selection)
+            val restored = f.restored()
+            assertEquals(f.selection, restored.workspaceSelection())
+            assertEquals("saved", restored.timeline.single().text)
+            assertEquals(ConnectionStatus.Connected, restored.connection)
+            f.assertReadOnly()
+        }
+    }
+
+    @Test fun failedProviderDiscoveryDoesNotReconnectOrLoseRestoration() = runBlocking {
+        Fixture(failProviders = true).use { f ->
+            f.repository.connect(f.host, f.selection)
+            f.restored()
+            val state = withTimeout(5_000) { f.repository.state.first { it.error == "Provider probe failed" } }
+            assertEquals(ConnectionStatus.Connected, state.connection)
+            assertEquals(f.selection, state.workspaceSelection())
             f.assertReadOnly()
         }
     }
