@@ -87,6 +87,8 @@ fun PaseoApp(
         choosePairingMethod = chooseMethod
     }
     var showHostEditor by rememberSaveable { mutableStateOf(initialEditHostId != null) }
+    var importSessions by rememberSaveable { mutableStateOf(false) }
+    var importCwd by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     var rename by remember { mutableStateOf("") }
     var archive by remember { mutableStateOf("") }
@@ -130,6 +132,10 @@ fun PaseoApp(
             else -> { vm.backToSessions(); terminal = false }
         }
     }
+    if (importSessions) ImportSessionSheet(vm, state, importCwd,
+        if (createAgent) workspace else null, onDismiss = { importSessions = false }, onImported = { agent ->
+            importSessions = false; createAgent = false; terminal = false; vm.openAgent(agent)
+        })
     ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = screen != "hosts" && !explorer, drawerContent = {
         ModalDrawerSheet(drawerContainerColor = sidebarColor(), drawerContentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.widthIn(max = 340.dp).fillMaxHeight()) {
             WorkspaceSidebar(vm, state, active = drawer.isOpen, onClose = { scope.launch { drawer.close() } }, onNew = { newProject = it; navigate("new") }, onOpen = {
@@ -185,6 +191,11 @@ fun PaseoApp(
                                     }
                                 }
                             }
+                            if (screen != "hosts" && !compactWorkspace) TextButton(onClick = { importSessions = true }) {
+                                PaseoGlyph(PaseoIcons.Import, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("导入会话")
+                            }
                             if (screen == "hosts") IconButton(onClick = { openPairing(chooseMethod = true); showHostEditor = true }) { PaseoGlyph(PaseoIcons.Plus, "添加主机") }
                             if (compactWorkspace && workspace != null) {
                                 IconButton(onClick = { picker = true }, modifier = Modifier.size(32.dp).semantics { contentDescription = "切换代理或终端" }) {
@@ -233,7 +244,7 @@ fun PaseoApp(
                         onSettings = ::openSettings)
                     screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { openPairing(chooseMethod = true); showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
                     screen == "chat" && workspace != null && !createAgent -> if (terminal) TerminalPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else ChatScreen(vm, state, snackbar, onCreateAgent = { createAgent = true }, topOverlayInset = topOverlayInset, expanded = composerFullscreen, onFullscreenChange = { composerFullscreen = it })
-                    else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject, onManageHosts = { navigate("hosts") }) { launchTerminal -> createAgent = false; terminal = launchTerminal }
+                    else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject, onManageHosts = { navigate("hosts") }, onImportCwd = { importCwd = it }) { launchTerminal -> createAgent = false; terminal = launchTerminal }
                 } }
                 if (floatingHeader && !composerFullscreen) {
                     // Official native FloatingHeaderLayout: same-color opacity stops + 48dp overhang.

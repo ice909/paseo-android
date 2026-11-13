@@ -27,7 +27,7 @@ import sh.paseo.android.core.*
 /** The compact official form has five reserved rows, with the composer docked below. */
 @Composable
 fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace?, initialProject: String?,
-    onManageHosts: () -> Unit, onCreated: (Boolean) -> Unit) {
+    onManageHosts: () -> Unit, onImportCwd: (String) -> Unit, onCreated: (Boolean) -> Unit) {
     val p = LocalPaseoPalette.current
     val creating by vm.creating.collectAsStateWithLifecycle()
     val hosts by vm.hosts.collectAsStateWithLifecycle()
@@ -70,6 +70,7 @@ fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace
         }
     }
     val latestSubmit by rememberUpdatedState(::submit)
+    LaunchedEffect(cwd, state.host?.id) { onImportCwd(cwd) }
     LaunchedEffect(key) { vm.homeSubmitRequests.collect { if (it == key) latestSubmit() } }
     LaunchedEffect(available.map { it.provider }) { if (provider.isBlank()) provider = available.firstOrNull()?.provider.orEmpty() }
     LaunchedEffect(project?.projectRootPath) { if (project != null) cwd = project.projectRootPath }

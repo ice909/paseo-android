@@ -109,3 +109,7 @@
 ## 主机设置导航（0.7.0）
 
 对照官方 `SidebarHostPicker`、`SettingsSidebar`、`HostSettingsPage` 与 `HOST_SECTION_ITEMS`：侧栏主机入口先显示已保存主机选择器，选择主机后打开概览，而不是把主机列表页当作设置页；概览显示连接状态、当前连接路径、连接地址、编辑和移除操作，并可进入项目、连接、配对设备、代理、元数据、语音、工作区、提供商、用量、终端和插件分区。概览和每个二级分区作为独立 `HostSettingsActivity` 实例压入 Android 返回栈；实例共享应用级 `AppViewModel`，避免重复创建主机网络连接。可从标题栏切换已保存主机或添加新主机。尚未移植的 daemon 配置分区会明确说明 Android 暂不支持，不提供无效开关；主机配对编辑、项目 / 工作区只读信息与全局外观入口复用已有原生能力。
+
+## 导入已有会话
+
+新建工作区页右上角提供“导入会话”，按当前项目目录读取主机的 `fetch_recent_provider_sessions_request`，可切换全部项目、搜索、筛选代理、刷新和加载更多。选择会话后通过 `import_agent_request` 传递 `providerId`、`providerHandleId` 和原始 `cwd`，刷新工作区目录并打开导入的会话；不预先创建空工作区。在已有工作区的新建代理页导入同目录会话时，支持该能力的主机会收到 `workspaceId`。图标由官方 Import 图标同步生成。

@@ -28,6 +28,8 @@ class WorkspaceFlowTest {
                     "fetch_workspaces_request" -> jsonObject("entries" to listOf(workspace), "emptyProjects" to listOf(jsonObject("projectId" to "empty", "projectDisplayName" to "Empty", "projectRootPath" to "/empty")), "subscriptionId" to "workspaces")
                     "fetch_agents_request" -> jsonObject("entries" to listOf(jsonObject("agent" to agent)), "subscriptionId" to "agents")
                     "list_available_providers_request" -> jsonObject("providers" to listOf(jsonObject("provider" to "claude", "available" to true)))
+                    "fetch_recent_provider_sessions_request" -> jsonObject("entries" to listOf(jsonObject("providerId" to "claude", "providerHandleId" to "native-1", "providerLabel" to "Claude", "cwd" to "/project", "title" to "Existing session")))
+                    "import_agent_request" -> jsonObject("status" to "agent_resumed", "agent" to JsonObject(agent + ("id" to JsonPrimitive("imported-a"))))
                     "workspace.create.request", "agent.create.request" -> jsonObject("creation" to jsonObject("phase" to "accepted"))
                     "creation.subscribe.request" -> jsonObject("snapshot" to jsonObject("phase" to if (failed) "failed" else "completed", "workspace" to workspace, "agent" to agent, "error" to if (failed) "Agent unavailable" else null))
                     "agent.timeline.set_subscription.request" -> jsonObject("subscriptionId" to "timeline")
@@ -42,6 +44,24 @@ class WorkspaceFlowTest {
     }
     private suspend fun awaitCatalog(repository: PaseoRepository) = withTimeout(5_000) {
         repository.state.first { it.catalogLoaded && it.agents.isNotEmpty() }
+    }
+    @Test fun importsNativeSessionAndOpensItsWorkspace() = runBlocking {
+        val server = server(); val repository = PaseoRepository()
+        try {
+            repository.connect(Host(name = "Test", url = server.url("/ws").toString())); awaitCatalog(repository)
+            val entries = repository.recentProviderSessions("/project").array("entries")
+            assertEquals("/project", requests.last { it.string("type") == "fetch_recent_provider_sessions_request" }.string("cwd"))
+            val imported = repository.importSession(entries.single().jsonObject, "w1")
+            val request = requests.last { it.string("type") == "import_agent_request" }
+            assertEquals("claude", request.string("providerId"))
+            assertEquals("native-1", request.string("providerHandleId"))
+            assertEquals("/project", request.string("cwd"))
+            assertEquals("w1", request.string("workspaceId"))
+            assertEquals("imported-a", imported.id)
+            assertEquals(imported.id, repository.state.value.selectedAgentId)
+            assertEquals(imported.workspaceId, repository.state.value.selectedWorkspaceId)
+            assertFalse(requests.any { it.string("type") == "workspace.create.request" })
+        } finally { repository.close(); server.close() }
     }
     @Test fun readsImageFromSelectedHostAndRejectsNonImages() = runBlocking {
         val server = server(); val repository = PaseoRepository()

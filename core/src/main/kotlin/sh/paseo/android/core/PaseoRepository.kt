@@ -447,6 +447,26 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             .array("providers").map { parseLegacyUsage(it.jsonObject) }
     }
 
+    suspend fun recentProviderSessions(cwd: String?, query: String = "", limit: Int = 50): JsonObject =
+        socket.request("fetch_recent_provider_sessions_request", "cwd" to cwd?.ifBlank { null },
+            "query" to query.takeIf { state.value.features.bool("importSessionSearch") && it.isNotBlank() }, "limit" to limit)
+
+    suspend fun importSession(entry: JsonObject, workspaceId: String? = null): Agent = withContext(dispatcher) {
+        require(entry.string("cwd").isNotBlank()) { "会话缺少工作目录" }
+        val result = socket.request("import_agent_request", "providerId" to entry.string("providerId"),
+            "providerHandleId" to entry.string("providerHandleId"), "cwd" to entry.string("cwd"),
+            "workspaceId" to workspaceId)
+        val agent = wireJson.decodeFromJsonElement<Agent>(result["agent"] ?: throw IOException("主机未返回导入的会话"))
+        upsert(agent)
+        // Import may create a workspace or reuse one outside the currently loaded catalog page.
+        refreshWorkspaces()
+        if (agent.workspaceId != null && state.value.workspaces.none { it.id == agent.workspaceId }) {
+            while (state.value.nextWorkspaceCursor != null && state.value.workspaces.none { it.id == agent.workspaceId }) refreshWorkspaces(loadMore = true)
+        }
+        selectAgent(agent.id)
+        agent
+    }
+
     suspend fun historyPage(query: String = "", cursor: String? = null): Pair<List<Agent>, String?> {
         val result = socket.request("fetch_agent_history_request", "search" to query.ifBlank { null },
             "sort" to listOf(jsonObject("key" to "updated_at", "direction" to "desc")),
