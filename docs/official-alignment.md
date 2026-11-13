@@ -113,3 +113,7 @@
 ## 导入已有会话
 
 新建工作区页右上角提供“导入会话”，按当前项目目录读取主机的 `fetch_recent_provider_sessions_request`，可切换全部项目、搜索、筛选代理、刷新和加载更多。选择会话后通过 `import_agent_request` 传递 `providerId`、`providerHandleId` 和原始 `cwd`，刷新工作区目录并打开导入的会话；不预先创建空工作区。在已有工作区的新建代理页导入同目录会话时，支持该能力的主机会收到 `workspaceId`。图标由官方 Import 图标同步生成。
+
+## 聊天图片预览
+
+消息和附件图片共用 `ImageLightbox`，对齐官方 `AttachmentLightbox` / 原生 `ZoomableViewport`：90% 黑色遮罩、居中适配（16 dp 边距、最大 960 × 640 dp）、安全区域右上角的放大／缩小／重置／关闭按钮。缩放范围为适配尺寸的 1–8 倍，按钮每次放大 1.25 倍或缩小至 0.8 倍；双击重置，点击图片外部关闭，双指缩放围绕手势中心且拖动受图片边界约束。保留长按下载原图到系统选择位置的 Android 扩展。

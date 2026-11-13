@@ -3,7 +3,6 @@ package sh.paseo.android.ui
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -15,8 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -25,8 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import java.io.File
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +86,7 @@ private fun attachmentBitmap(path: String, maxEdge: Int): ImageBitmap? {
 @Composable
 private fun InlineImageAttachment(attachment: ChatAttachment) {
     var preview by remember { mutableStateOf(false) }
+    val download = rememberImageDownload { attachmentImageBytes(attachment.localPath) }
     val bitmap = attachmentBitmap(attachment.localPath, 2048)
     if (bitmap != null) {
         val ratio = bitmap.width.toFloat() / bitmap.height
@@ -98,31 +94,17 @@ private fun InlineImageAttachment(attachment: ChatAttachment) {
         val width = if (ratio >= 1f) maxSize else maxSize * ratio
         val height = if (ratio >= 1f) maxSize / ratio else maxSize
         Image(bitmap, attachment.name, Modifier.padding(top = 4.dp).size(width, height)
-            .clip(RoundedCornerShape(8.dp)).clickable { preview = true }, contentScale = ContentScale.Fit)
+            .clip(RoundedCornerShape(8.dp)).combinedClickable(onClick = { preview = true }, onLongClickLabel = "下载图片", onLongClick = download), contentScale = ContentScale.Fit)
     }
     if (preview) AttachmentPreview(attachment) { preview = false }
 }
 
 @Composable
 private fun AttachmentPreview(attachment: ChatAttachment, onDismiss: () -> Unit) {
-    if (attachment.isImage) Dialog(onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = LocalPaseoPalette.current.surface0) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(attachment.name, Modifier.weight(1f).padding(16.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = onDismiss) { PaseoGlyph(PaseoIcons.X, "关闭预览") }
-                }
-                val bitmap = attachmentBitmap(attachment.localPath, 2048)
-                var scale by remember { mutableFloatStateOf(1f) }
-                var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-                Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(0.dp)).pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ -> scale = (scale * zoom).coerceIn(1f, 6f); offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan }
-                }, contentAlignment = Alignment.Center) {
-                    if (bitmap != null) Image(bitmap, attachment.name, Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y })
-                    else Text("无法读取图片")
-                }
-            }
-        }
+    val download = rememberImageDownload { attachmentImageBytes(attachment.localPath) }
+    if (attachment.isImage) {
+        val bitmap = attachmentBitmap(attachment.localPath, 2048)
+        ImageLightbox(bitmap, onDismiss, download)
     } else {
         val text by produceState<String?>(null, attachment.id) {
             value = withContext(Dispatchers.IO) {
@@ -261,4 +243,18 @@ fun ForgeAttachmentPicker(vm: sh.paseo.android.AppViewModel, agent: Agent, moder
             }
         }
     }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
+}
+
+private suspend fun attachmentImageBytes(path: String): ByteArray = withContext(Dispatchers.IO) {
+    File(path).inputStream().use { input ->
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(32 * 1024)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            require(output.size() + count <= PaseoRepository.MAX_DISPLAY_IMAGE_BYTES) { "图片过大" }
+            output.write(buffer, 0, count)
+        }
+        output.toByteArray()
+    }
 }

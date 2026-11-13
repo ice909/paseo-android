@@ -4,8 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -14,12 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -57,7 +52,7 @@ private fun imageBytesFromNetwork(source: String): ByteArray {
     } finally { connection.disconnect() }
 }
 
-private suspend fun decodeMessageImage(source: String, vm: AppViewModel, hostId: String, cwd: String): Bitmap = withContext(Dispatchers.IO) {
+private suspend fun messageImageBytes(source: String, vm: AppViewModel, hostId: String, cwd: String): ByteArray = withContext(Dispatchers.IO) {
     val bytes = when {
         source.startsWith("data:image/", ignoreCase = true) -> {
             val metadata = source.substringBefore(',')
@@ -73,6 +68,11 @@ private suspend fun decodeMessageImage(source: String, vm: AppViewModel, hostId:
         }
     }
     require(bytes.size <= PaseoRepository.MAX_DISPLAY_IMAGE_BYTES) { "图片过大" }
+    bytes
+}
+
+private suspend fun decodeMessageImage(source: String, vm: AppViewModel, hostId: String, cwd: String): Bitmap = withContext(Dispatchers.IO) {
+    val bytes = messageImageBytes(source, vm, hostId, cwd)
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     require(bounds.outWidth > 0 && bounds.outHeight > 0) { "无法读取图片" }
@@ -86,6 +86,7 @@ private suspend fun decodeMessageImage(source: String, vm: AppViewModel, hostId:
 @Composable
 internal fun MessageImage(source: String, alt: String, vm: AppViewModel, connected: Boolean, hostId: String,
     cwd: String, occurrence: String, thumbnail: Boolean = false) {
+    val download = rememberImageDownload { messageImageBytes(source, vm, hostId, cwd) }
     val palette = LocalPaseoPalette.current
     val cacheKey = remember(hostId, cwd, occurrence, source) { "$hostId\u0000$cwd\u0000$occurrence\u0000${source.length}:${source.hashCode()}" }
     var retry by remember { mutableIntStateOf(0) }
@@ -101,27 +102,13 @@ internal fun MessageImage(source: String, alt: String, vm: AppViewModel, connect
     }
     if (bitmap != null) {
         val image = requireNotNull(bitmap).asImageBitmap()
-        if (thumbnail) Image(image, "图片：$alt", Modifier.padding(top = 4.dp).size(112.dp).clip(RoundedCornerShape(8.dp)).clickable { preview = true }, contentScale = ContentScale.Crop)
+        if (thumbnail) Image(image, "图片：$alt", Modifier.padding(top = 4.dp).size(112.dp).clip(RoundedCornerShape(8.dp)).combinedClickable(onClick = { preview = true }, onLongClickLabel = "下载图片", onLongClick = download), contentScale = ContentScale.Crop)
         else BoxWithConstraints(Modifier.fillMaxWidth()) {
             val ratio = image.width.toFloat() / image.height.toFloat()
             val width = minOf(maxWidth, 400.dp * ratio)
-            Image(image, if (alt.isBlank()) "图片" else "图片：$alt", Modifier.width(width).height(width / ratio).clip(RoundedCornerShape(8.dp)).clickable { preview = true }, contentScale = ContentScale.Fit)
+            Image(image, if (alt.isBlank()) "图片" else "图片：$alt", Modifier.width(width).height(width / ratio).clip(RoundedCornerShape(8.dp)).combinedClickable(onClick = { preview = true }, onLongClickLabel = "下载图片", onLongClick = download), contentScale = ContentScale.Fit)
         }
-        if (preview) Dialog(onDismissRequest = { preview = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.fillMaxSize(), color = palette.surface0) {
-                Column(Modifier.fillMaxSize().systemBarsPadding()) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        PaseoText(alt.ifBlank { "图片" }, Modifier.weight(1f).padding(16.dp), color = palette.foreground, maxLines = 1)
-                        IconButton(onClick = { preview = false }) { PaseoGlyph(PaseoIcons.X, "关闭图片预览", Modifier.size(20.dp)) }
-                    }
-                    var scale by remember { mutableFloatStateOf(1f) }
-                    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-                    Image(image, null, Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ -> scale = (scale * zoom).coerceIn(1f, 6f); offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan }
-                    }.graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }, contentScale = ContentScale.Fit)
-                }
-            }
-        }
+        if (preview) ImageLightbox(image, onDismiss = { preview = false }, onDownload = download)
     } else if (failed) {
         TextButton(onClick = { failed = false; retry++ }, contentPadding = PaddingValues(0.dp)) {
             PaseoGlyph(PaseoIcons.ImagePlus, null, Modifier.size(16.dp), palette.foregroundMuted)

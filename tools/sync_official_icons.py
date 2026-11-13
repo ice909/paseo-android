@@ -33,7 +33,7 @@ LUCIDE = {
     'Undo2':'undo-2', 'MessageSquare':'message-square', 'Layers':'layers', 'ListEnd':'list-end', 'Mic':'mic', 'Volume2':'volume-2', 'Pause':'pause', 'Play':'play',
     'Bot':'bot', 'Wrench':'wrench', 'MicVocal':'mic-vocal', 'ListTodo':'list-todo',
     'History':'rotate-ccw-clock', 'Gauge':'gauge', 'CircleHelp':'circle-question-mark', 'EllipsisVertical':'ellipsis-vertical', 'Settings2':'settings-2', 'ChevronLeft':'chevron-left', 'SlidersHorizontal':'sliders-horizontal', 'CircleAlert':'circle-alert', 'Archive':'archive',
-    'Import':'import', 'TriangleAlert':'triangle-alert', 'GitBranch':'git-branch', 'MessageCircle':'message-circle',
+    'ZoomIn':'zoom-in', 'ZoomOut':'zoom-out', 'Scan':'scan', 'Import':'import', 'TriangleAlert':'triangle-alert', 'GitBranch':'git-branch', 'MessageCircle':'message-circle',
 }
 BRANDS = ['antigravity','claude','codex','copilot','kiro','minimax','omp','opencode','pi']
 ANDROID = 'http://schemas.android.com/apk/res/android'
