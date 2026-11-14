@@ -12,6 +12,44 @@ class ConversationControllerTest {
     private val key = ConversationKey(host.id, "a")
     private fun snapshot(running: Boolean = false, permissions: List<PermissionRequest> = emptyList()) = PaseoState(host = host,
         connection = ConnectionStatus.Connected, agents = listOf(Agent("a", status = if (running) "running" else "idle", activeTurnId = "t", pendingPermissions = permissions)), selectedAgentId = "a")
+    @Test fun rpcAcceptanceKeepsWorkingUntilCanonicalEchoAndHandsOffToActiveTurn() = runTest {
+        val controller = ConversationController(this, { _, _, _ -> "accepted" }, {})
+        controller.update(snapshot())
+        controller.setDraft(key, "hello"); controller.send(key); runCurrent()
+        assertFalse(controller.session(key).sending)
+        assertTrue(controller.session(key).hasActiveSubmission)
+        val id = controller.session(key).optimistic.single().id
+        controller.update(snapshot())
+        assertTrue(controller.session(key).hasActiveSubmission)
+        val echo = listOf(TimelineRow("echo", "user_message", "hello", messageId = id))
+        controller.update(snapshot(true).copy(timeline = echo))
+        assertFalse(controller.session(key).hasActiveSubmission)
+        assertTrue(controller.session(key).optimistic.isEmpty())
+        controller.update(snapshot(false).copy(timeline = echo))
+        assertFalse(controller.session(key).hasActiveSubmission)
+    }
+
+    @Test fun foregroundRecoveryDoesNotDrainQueueFromAnUnrefreshedIdleSnapshot() = runTest {
+        val sent = mutableListOf<String>()
+        val controller = ConversationController(this, { _, message, _ -> sent += message.draft.text; "queued" }, {})
+        controller.update(snapshot(true))
+        controller.setDraft(key, "one"); controller.send(key, forceQueue = true)
+        controller.setDraft(key, "two"); controller.send(key, forceQueue = true)
+        controller.update(snapshot(false).copy(recoveringForeground = true)); runCurrent()
+        assertTrue(sent.isEmpty())
+        controller.update(snapshot(false)); runCurrent()
+        assertEquals(listOf("one"), sent)
+        assertTrue(controller.session(key).hasActiveSubmission)
+        controller.update(snapshot(false)); runCurrent()
+        assertEquals(listOf("one"), sent)
+    }
+
+    @Test fun restoredUnconfirmedMessageDoesNotInventAnActiveTurn() = runTest {
+        val controller = ConversationController(this, { _, _, _ -> "accepted" }, {})
+        controller.restoreMemory(mapOf(key to ConversationMemory(pending = listOf(OutgoingMessage(draft = ChatDraft("old"))))))
+        assertFalse(controller.session(key).hasActiveSubmission)
+    }
+
     @Test fun clearsImmediatelyAndMergesFailedDraftWithNewTypingAndReusesId() = runTest {
         val receipt = CompletableDeferred<String>()
         val sent = mutableListOf<OutgoingMessage>()

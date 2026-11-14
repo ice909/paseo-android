@@ -133,6 +133,7 @@ data class PaseoState(
     val timeline: List<TimelineRow> = emptyList(),
     val hasOlder: Boolean = false,
     val loadingTimeline: Boolean = false,
+    val recoveringForeground: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
 ) {

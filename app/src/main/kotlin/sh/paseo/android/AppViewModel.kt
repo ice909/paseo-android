@@ -257,7 +257,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ConnectionStatus.Reconnecting -> repository.reconnectNow()
             ConnectionStatus.Connected -> {
                 if (foregroundVerificationJob?.isActive != true) {
-                    foregroundVerificationJob = viewModelScope.launch { repository.verifyConnection() }
+                    foregroundVerificationJob = viewModelScope.launch { repository.recoverForeground() }
                 }
             }
             else -> Unit

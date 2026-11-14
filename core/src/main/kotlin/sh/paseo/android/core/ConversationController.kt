@@ -26,7 +26,10 @@ data class ConversationState(
     val optimistic: List<OutgoingMessage> = emptyList(), val sending: Boolean = false,
     val sentAttachments: Map<String, List<ChatAttachment>> = emptyMap(),
     val cancelling: Boolean = false, val error: String? = null, val failed: OutgoingMessage? = null,
-)
+) {
+    // RPC acceptance precedes the canonical provider echo; keep activity visible through that handoff.
+    val hasActiveSubmission: Boolean get() = sending || optimistic.any { it.delivery in setOf("sending", "accepted", "queued") }
+}
 
 /** Confined to the supplied UI scope. Keys include the host so drafts/receipts cannot cross hosts. */
 class ConversationController(
@@ -74,6 +77,7 @@ class ConversationController(
     fun update(value: PaseoState) {
         snapshot = value
         val host = value.host?.id ?: return
+        if (value.recoveringForeground) return
         val running = value.agents.filter { it.running }.map { ConversationKey(host, it.id) }.toSet()
         val reconnected = value.connected && previousConnectedHost != host
         val discovered = value.agents.map { ConversationKey(host, it.id) }.filter { it !in knownAgents }.toSet()

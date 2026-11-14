@@ -20,6 +20,14 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
     private val _events = MutableSharedFlow<JsonObject>(extraBufferCapacity = 64)
     val events = _events.asSharedFlow()
     private val buffer = TimelineBuffer()
+    private val agentRevisions = mutableMapOf<String, Long>()
+    private fun markAgentChanged(id: String) { agentRevisions[id] = (agentRevisions[id] ?: 0) + 1 }
+    private fun applyAgentSnapshot(payload: JsonObject, id: String, revision: Long) {
+        if ((agentRevisions[id] ?: 0) == revision) payload["agent"]?.takeIf { it is JsonObject }?.let {
+            val agent = wireJson.decodeFromJsonElement<Agent>(it)
+            if (agent.id == id) upsert(agent)
+        }
+    }
     private var connectionJob: Job? = null
     private var timelineJob: Job? = null
     private var publishJob: Job? = null
@@ -206,6 +214,41 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         }
     }
 
+    /** A successful ping proves transport liveness, not that backgrounded subscriptions stayed current. */
+    suspend fun recoverForeground() = withContext(dispatcher) {
+        val hostId = state.value.host?.id ?: return@withContext
+        _state.update { it.copy(recoveringForeground = true) }
+        try {
+            verifyConnection()
+            if (!state.value.connected || state.value.host?.id != hostId) return@withContext
+            val viewedJob = timelineJob
+            viewedJob?.join()
+            val id = state.value.selectedAgentId ?: return@withContext
+            val token = socket.connectionToken()
+            fun current() = state.value.host?.id == hostId && state.value.selectedAgentId == id &&
+                timelineJob === viewedJob && socket.connectionToken() == token && state.value.connected
+            if (!current()) return@withContext
+            val revision = agentRevisions[id] ?: 0
+            val cursor = buffer.endSeq?.takeIf { buffer.epoch.isNotBlank() }?.let { jsonObject("epoch" to buffer.epoch, "seq" to it) }
+            var page = socket.request("fetch_agent_timeline_request", "agentId" to id,
+                "direction" to if (cursor == null) "tail" else "after", "cursor" to cursor,
+                "limit" to TIMELINE_FETCH_PAGE_SIZE, "projection" to "projected", expectedGeneration = token)
+            if (!current()) return@withContext
+            // A large gap or invalid cursor goes straight to the latest tail, as in the official foreground recovery.
+            if (page.bool("hasNewer") || page.bool("reset") || page.bool("staleCursor") || page.bool("gap") ||
+                (buffer.epoch.isNotBlank() && page.string("epoch") != buffer.epoch)) {
+                page = socket.request("fetch_agent_timeline_request", "agentId" to id, "direction" to "tail",
+                    "limit" to TIMELINE_FETCH_PAGE_SIZE, "projection" to "projected", "wholeTurns" to true, expectedGeneration = token)
+            }
+            if (current()) {
+                buffer.hydrate(page)
+                applyAgentSnapshot(page, id, revision)
+                publishTimeline()
+            }
+        } catch (error: Exception) { report(error) }
+        finally { _state.update { if (it.host?.id == hostId) it.copy(recoveringForeground = false) else it } }
+    }
+
     @Synchronized
     private fun reconnectIfCurrentConnectionFailed(token: Long) {
         val current = state.value
@@ -296,13 +339,17 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         if (!loadMore) while (state.value.nextAgentCursor != null) fetchAgents(cursor = state.value.nextAgentCursor)
     }
     private suspend fun fetchAgents(subscribe: Boolean = false, cursor: String? = null) {
+        val revisions = agentRevisions.toMap()
         val result = socket.request("fetch_agents_request",
             "scope" to "active", "page" to jsonObject("limit" to 100, "cursor" to cursor),
             "sort" to listOf(jsonObject("key" to "updated_at", "direction" to "desc")),
             "subscribe" to if (subscribe) jsonObject() else null,
         )
         if (subscribe) catalogSubscription = result.string("subscriptionId").ifBlank { null }
-        val agents = result.array("entries").map { wireJson.decodeFromJsonElement<Agent>(it.jsonObject.obj("agent")) }
+        val agents = result.array("entries").mapNotNull {
+            val agent = wireJson.decodeFromJsonElement<Agent>(it.jsonObject.obj("agent"))
+            if ((agentRevisions[agent.id] ?: 0) == (revisions[agent.id] ?: 0)) agent else state.value.agents.find { current -> current.id == agent.id }
+        }
         _state.update { current -> current.copy(
             agents = ((if (cursor != null) current.agents else emptyList()) + agents).distinctBy { it.id }.filter { it.archivedAt == null },
             nextAgentCursor = result.obj("pageInfo").string("nextCursor").ifBlank { null },
@@ -382,12 +429,13 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
                 releaseTimeline()
                 val subscription = socket.request("agent.timeline.set_subscription.request", "agentIds" to listOf(agentId))
                 timelineSubscription = subscription.string("subscriptionId").ifBlank { null }
+                val revision = agentRevisions[agentId] ?: 0
                 val payload = socket.request("fetch_agent_timeline_request", "agentId" to agentId,
                     "direction" to "tail", "limit" to TIMELINE_FETCH_PAGE_SIZE,
                     "projection" to "projected", "wholeTurns" to true)
                 if (state.value.host?.id == hostId && state.value.selectedAgentId == agentId) {
                     buffer.hydrate(payload)
-                    payload["agent"]?.takeIf { it is JsonObject }?.let { upsert(wireJson.decodeFromJsonElement<Agent>(it)) }
+                    applyAgentSnapshot(payload, agentId, revision)
                     publishTimeline()
                 }
             } catch (error: Exception) { report(error) }
@@ -656,10 +704,12 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
     fun terminalInput(id: String, data: String) = socket.send("terminal_input", "terminalId" to id, "message" to jsonObject("type" to "input", "data" to data))
 
     private fun upsert(agent: Agent) {
+        markAgentChanged(agent.id)
         _state.update { current -> current.copy(agents = (current.agents.filterNot { it.id == agent.id } +
             if (agent.archivedAt == null) listOf(agent) else emptyList()).sortedByDescending { it.updatedAt }) }
     }
     private fun permission(agentId: String, request: PermissionRequest?, resolvedId: String = "") {
+        markAgentChanged(agentId)
         _state.update { current -> current.copy(agents = current.agents.map { agent ->
             if (agent.id != agentId) agent else agent.copy(pendingPermissions =
                 agent.pendingPermissions.filterNot { it.id == (request?.id ?: resolvedId) } + listOfNotNull(request))
@@ -681,6 +731,7 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
             "agent_update" -> if (payload.string("kind") == "upsert") upsert(wireJson.decodeFromJsonElement<Agent>(payload.obj("agent")))
                 else {
                     val removed = agentId.ifBlank { payload.string("id") }
+                    markAgentChanged(removed)
                     if (state.value.selectedAgentId == removed) leaveAgent()
                     _state.update { it.copy(agents = it.agents.filterNot { agent -> agent.id == removed }) }
                 }
@@ -698,6 +749,7 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
                     "permission_requested" -> permission(agentId, wireJson.decodeFromJsonElement<PermissionRequest>(event.obj("request")))
                     "permission_resolved" -> permission(agentId, null, event.string("requestId"))
                     "turn_started", "turn_completed", "turn_canceled", "turn_failed" -> {
+                        markAgentChanged(agentId)
                         _state.update { current -> current.copy(agents = current.agents.map {
                             if (it.id != agentId) it else it.applyTurnLifecycle(event, payload.string("timestamp"))
                         }) }

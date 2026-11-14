@@ -136,7 +136,7 @@ private fun Conversation(vm: AppViewModel, state: PaseoState, agent: Agent, key:
     val pending = session.optimistic.filterNot { it.id in confirmed }
     val rows = state.timeline + pending.map { message -> TimelineRow("local:${message.id}", "user_message", message.draft.text,
         status = message.delivery, messageId = message.id, turnId = message.turnId) }
-    val turnActive = agent.activeTurn != null || agent.status == "running" || session.sending
+    val turnActive = agent.running || session.hasActiveSubmission
     val nestedKeys = remember(rows, expandedTurns, displayMode) {
         if (displayMode == ConversationDisplayMode.CollapseTurns) expandedTurnWorkKeys(rows, expandedTurns.toSet()) else emptySet()
     }
