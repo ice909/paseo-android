@@ -2,15 +2,16 @@ package sh.paseo.android.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -19,6 +20,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -95,9 +97,15 @@ internal fun ImageLightbox(image: ImageBitmap?, onDismiss: () -> Unit, onDownloa
 @Composable
 private fun LightboxButton(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
     val palette = LocalPaseoPalette.current
-    IconButton(onClick = onClick, enabled = enabled,
-        modifier = Modifier.size(32.dp).graphicsLayer { alpha = if (enabled) 1f else 0.5f }
-            .background(palette.surface2, RoundedCornerShape(8.dp))) {
+    // Match official compact toolbar geometry without Material IconButton's larger inner frame.
+    Box(
+        modifier = Modifier.size(32.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.5f }
+            .clip(RoundedCornerShape(8.dp))
+            .background(palette.surface2)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
         PaseoGlyph(icon, label, Modifier.size(18.dp), palette.foregroundMuted)
     }
 }
