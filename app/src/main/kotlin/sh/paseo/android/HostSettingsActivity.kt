@@ -7,6 +7,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -49,9 +51,7 @@ class HostSettingsActivity : ComponentActivity() {
                     section = section,
                     onBack = ::finish,
                     onOpenSection = { next -> open(this, hostId, next) },
-                    onEdit = { openHostEditor(hostId) },
-                    onAppearance = { openSettings() },
-                    onRemove = { host -> vm.deleteHost(host); finish() },
+                    onRemoved = ::finish,
                 )
             }
         }
@@ -70,14 +70,6 @@ class HostSettingsActivity : ComponentActivity() {
                 ViewModelProvider.AndroidViewModelFactory.getInstance(application),
             )[AppViewModel::class.java].onAppForegrounded()
         }
-    }
-
-    private fun openHostEditor(hostId: String) {
-        startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_EDIT_HOST_ID, hostId))
-    }
-
-    private fun openSettings() {
-        SettingsActivity.open(this)
     }
 
     companion object {
@@ -100,36 +92,44 @@ private fun HostSettingsActivityContent(
     section: String,
     onBack: () -> Unit,
     onOpenSection: (String) -> Unit,
-    onEdit: () -> Unit,
-    onAppearance: () -> Unit,
-    onRemove: (Host) -> Unit,
+    onRemoved: () -> Unit,
 ) {
     val hosts by vm.hosts.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val initialized by vm.initialized.collectAsStateWithLifecycle()
     val host = hosts.find { it.id == hostId }
     val context = LocalContext.current
+    LaunchedEffect(initialized, host) { if (initialized && host == null) onRemoved() }
     var pickerOpen by remember { mutableStateOf(false) }
+    var sectionsOpen by remember { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(vm) { vm.notices.collect { snackbar.showSnackbar(it) } }
+    LocalNetworkPermission(vm)
     var addHostOpen by remember { mutableStateOf(false) }
     val palette = LocalPaseoPalette.current
 
     Scaffold(
         containerColor = palette.surface0,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             Column {
                 Row(
                     Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = onBack) { PaseoGlyph(PaseoIcons.ArrowLeft, "返回", Modifier.size(18.dp)) }
-                    Text(
-                        if (section == "host") "主机" else hostSettingsTitle(section),
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                    )
-                    IconButton(onClick = { pickerOpen = true }) { PaseoGlyph(PaseoIcons.ChevronsUpDown, "切换主机", Modifier.size(18.dp)) }
-                    IconButton(onClick = { addHostOpen = true }) { PaseoGlyph(PaseoIcons.Plus, "添加主机", Modifier.size(18.dp)) }
+                    HostHeaderButton(PaseoIcons.ArrowLeft, "返回", onBack)
+                    Row(Modifier.weight(1f).clickable { sectionsOpen = true }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(hostSettingsTitle(section), style = PaseoUiText, maxLines = 1)
+                        PaseoGlyph(PaseoIcons.ChevronDown, "设置导航", Modifier.padding(start = 4.dp).size(14.dp))
+                    }
+                    Row(Modifier.widthIn(max = 150.dp).clickable { pickerOpen = true }.padding(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PaseoGlyph(PaseoIcons.Server, null, Modifier.size(16.dp))
+                        Text(host?.displayName ?: "主机", Modifier.weight(1f, fill = false), style = PaseoUiText, maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        PaseoGlyph(PaseoIcons.ChevronsUpDown, "切换主机", Modifier.size(14.dp))
+                    }
+                    HostHeaderButton(PaseoIcons.Plus, "添加主机") { addHostOpen = true }
                 }
                 HorizontalDivider(color = palette.border)
             }
@@ -140,14 +140,21 @@ private fun HostSettingsActivityContent(
                 !initialized -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 host == null -> Text("找不到此主机。", Modifier.align(Alignment.Center), color = palette.foregroundMuted)
                 else -> HostSettingsScreen(
-                    host = host,
-                    section = section,
-                    state = state,
-                    onSection = onOpenSection,
-                    onEdit = onEdit,
-                    onRemove = { onRemove(host) },
-                    onAppearance = onAppearance,
+                    vm = vm, host = host, section = section, state = state, onRemove = onRemoved,
                 )
+            }
+        }
+    }
+
+    if (sectionsOpen) ModalBottomSheet(onDismissRequest = { sectionsOpen = false },
+        containerColor = palette.surface0, contentColor = palette.foreground) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+            Text(host?.displayName.orEmpty(), Modifier.padding(16.dp), style = PaseoUiText, color = palette.foregroundMuted)
+            (listOf(HostSettingsSection("host", "主机", PaseoIcons.Server, "")) + hostSettingsSections).forEach { item ->
+                ListItem(headlineContent = { Text(item.title, style = PaseoUiText) },
+                    leadingContent = { PaseoGlyph(item.icon, null, Modifier.size(18.dp)) },
+                    trailingContent = { if (section == item.id) PaseoGlyph(PaseoIcons.Check, "当前页面", Modifier.size(16.dp)) },
+                    modifier = Modifier.clickable { sectionsOpen = false; if (section != item.id) onOpenSection(item.id) })
             }
         }
     }
@@ -162,11 +169,11 @@ private fun HostSettingsActivityContent(
             hosts.forEach { item ->
                 ListItem(
                     headlineContent = { Text(item.displayName, maxLines = 1) },
-                    supportingContent = { Text(item.url, maxLines = 1) },
+                    trailingContent = { if (host?.id == item.id) PaseoGlyph(PaseoIcons.Check, "已选择", Modifier.size(16.dp)) },
                     leadingContent = { PaseoGlyph(PaseoIcons.Server, null, tint = palette.foregroundMuted) },
                     modifier = Modifier.clickable {
                         pickerOpen = false
-                        HostSettingsActivity.open(context, item.id)
+                        HostSettingsActivity.open(context, item.id, section)
                     },
                 )
             }
@@ -180,6 +187,15 @@ private fun HostSettingsActivityContent(
     if (addHostOpen) PairingSheet(
         vm = vm,
         chooseMethod = true,
+        onScanQr = { addHostOpen = false; PairScanActivity.open(context, fromSettings = true) },
         onDismiss = { addHostOpen = false },
+        onHostSaved = { HostSettingsActivity.open(context, it.id, "connections") },
     )
+}
+
+@Composable
+private fun HostHeaderButton(icon: Int, label: String, onClick: () -> Unit) {
+    Box(Modifier.size(32.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
+        PaseoGlyph(icon, label, Modifier.size(18.dp), LocalPaseoPalette.current.foregroundMuted)
+    }
 }

@@ -128,6 +128,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch { state.collect(conversations::update) }
         viewModelScope.launch {
+            state.map { it.host?.id to it.serverId }.distinctUntilChanged().collect { (hostId, serverId) ->
+                if (hostId == null || serverId.isNullOrBlank()) return@collect
+                try {
+                    storageMutex.withLock {
+                        val current = hosts.value.find { it.id == hostId } ?: return@withLock
+                        val (updated, merged) = mergeVerifiedHost(hosts.value, current.copy(serverId = serverId))
+                        if (updated == hosts.value) return@withLock
+                        store.save(updated, merged.id)
+                        val removed = hosts.value.map { it.id }.toSet() - updated.map { it.id }.toSet()
+                        workspaceSelectionStore.selection?.takeIf { it.hostId in removed }?.let {
+                            workspaceSelectionStore.remember(it.copy(hostId = merged.id))
+                        }
+                        hosts.value = updated
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { notices.emit("无法更新主机连接：${error.message}") }
+            }
+        }
+        viewModelScope.launch {
             combine(state, screen, initialized) { current, destination, ready -> Triple(current, destination, ready) }
                 .collect { (current, destination, ready) ->
                     if (!ready || current.restoringWorkspace != null || hosts.value.none { it.id == current.host?.id }) return@collect
@@ -266,14 +285,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     private suspend fun networkAccess(host: Host): Boolean {
-        val hasLocalRoute = LocalNetworkAccess.isLocalHost(host) ||
-            host.directUrl?.let { LocalNetworkAccess.isLocalHost(host.copy(url = it, relay = null)) } == true
+        val hasLocalRoute = host.connectionCandidates().any { LocalNetworkAccess.isLocalHost(it) }
         if (!LocalNetworkAccess.permissionMissing(getApplication()) || !hasLocalRoute) return true
         networkPermissionResult?.cancel()
         val result = CompletableDeferred<Boolean>()
         networkPermissionResult = result
         localNetworkPermissionRequest.value = host
-        return try { result.await() }
+        return try { result.await() || host.connectionCandidates().any { !LocalNetworkAccess.isLocalHost(it) } }
         finally {
             if (networkPermissionResult === result) { networkPermissionResult = null; localNetworkPermissionRequest.value = null }
         }
@@ -289,9 +307,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _screen.value = destination
         action { persist(host.id) }
     }
-    fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit): Job =
-        saveHost(id, name, address, password, "", onSaved)
-    fun saveHost(id: String?, name: String, address: String, password: String, directAddress: String, onSaved: () -> Unit): Job {
+    fun saveHost(id: String?, name: String, address: String, password: String, onSaved: () -> Unit, onHostSaved: ((Host) -> Unit)? = null): Job {
         val attempt = ++pairingGeneration
         pairingJob?.cancel()
         pairingBusy.value = true
@@ -301,59 +317,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val endpoint = Endpoint.parse(address)
                 val relay = endpoint.relay
-                val existing = hosts.value.find { old -> old.id == id || (id == null &&
-                    if (relay != null) old.relay?.serverId == relay.serverId else old.relay == null && old.url == endpoint.url) }
-                val directEndpoint = directAddress.trim().takeIf { it.isNotEmpty() }?.let {
-                    val direct = Endpoint.parse(it)
-                    require(direct.relay == null) { "局域网地址请填写 ws / wss / tcp 主机地址，不要填写配对链接" }
-                    require(relay != null) { "请使用配对链接作为主机地址，局域网地址作为备用连接" }
-                    direct
-                }
-                val preservedName = existing?.takeIf { id == null && !it.automaticName }?.name
-                val draft = Host(id ?: existing?.id ?: newId(), name.trim(), endpoint.url,
-                    password.ifEmpty { endpoint.password ?: directEndpoint?.password.orEmpty() }, relay,
-                    automaticName = name.isBlank() && preservedName == null, directUrl = directEndpoint?.url)
+                val draft = Host(id = id ?: newId(), name = name.trim(), url = endpoint.url,
+                    password = password.ifEmpty { endpoint.password.orEmpty() }, relay = relay,
+                    automaticName = name.isBlank(), serverId = relay?.serverId)
                 if (!networkAccess(draft)) {
-                    pairingError.value = "连接局域网主机需要附近设备权限，请允许后重试。"
+                    pairingError.value = "连接本地网络需要附近设备权限，请允许后重试。"
                     return@launch
                 }
-                // Probe before replacing or saving a host. Invalid links/passwords leave existing hosts untouched.
                 val candidate = DaemonSocket()
                 probe = candidate
-                val validationCandidates = buildList {
-                    directEndpoint?.let { add(draft.copy(url = it.url, relay = null)) }
-                    add(draft)
+                val info = withContext(Dispatchers.IO) { candidate.open(draft) }
+                val serverId = info.string("serverId")
+                require(serverId.isNotBlank()) { "主机未返回 serverId，无法保存连接" }
+                require(relay == null || relay.serverId == serverId) { "配对链接与主机身份不一致" }
+                val target = hosts.value.find { it.id == id }
+                require(target == null || (target.serverId ?: target.relay?.serverId)?.let { it == serverId } != false) {
+                    "连接不属于此主机，请使用添加主机"
                 }
-                var info: kotlinx.serialization.json.JsonObject? = null
-                var validationError: Exception? = null
-                for (validationHost in validationCandidates) {
-                    try {
-                        val result = withContext(Dispatchers.IO) {
-                            candidate.open(validationHost, timeoutMs = if (validationHost.relay == null && relay != null) 6_000 else 20_000)
-                        }
-                        if (validationHost.relay == null && relay != null && result.string("serverId") != relay.serverId) {
-                            candidate.disconnect()
-                            throw AuthenticationException("局域网地址连接到的不是配对中的主机", AuthFailure.Security)
-                        }
-                        info = result
-                        break
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: AuthenticationException) {
-                        if (validationHost.relay == null && error.reason == AuthFailure.Security) throw error
-                        validationError = error
-                        candidate.disconnect()
-                    } catch (error: Exception) {
-                        validationError = error
-                        candidate.disconnect()
+                val verified = draft.copy(serverId = serverId,
+                    name = name.trim().ifBlank { info.string("hostname").ifBlank { draft.displayName } })
+                var host = verified
+                storageMutex.withLock {
+                    val (updated, merged) = mergeVerifiedHost(hosts.value, verified)
+                    store.save(updated, merged.id)
+                    val removedIds = hosts.value.map { it.id }.toSet() - updated.map { it.id }.toSet()
+                    workspaceSelectionStore.selection?.takeIf { it.hostId in removedIds }?.let {
+                        workspaceSelectionStore.remember(it.copy(hostId = merged.id))
                     }
+                    hosts.value = updated
+                    host = merged
                 }
-                val verifiedInfo = info ?: throw validationError ?: IllegalStateException("无法验证主机连接")
-                val label = name.trim().ifBlank { preservedName ?: verifiedInfo.string("hostname").ifBlank { draft.displayName } }
-                val host = draft.copy(name = label)
-                val updated = hosts.value.filterNot { it.id == host.id } + host
-                storageMutex.withLock { store.save(updated, host.id); hosts.value = updated }
                 connect(host)
+                onHostSaved?.invoke(host)
                 onSaved()
             } catch (_: TimeoutCancellationException) {
                 pairingError.value = "连接超时，请确认电脑上的 Paseo 已启动，并检查网络。"
@@ -366,13 +361,63 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         return pairingJob!!
     }
-    fun deleteHost(host: Host) = action {
-        val updated = hosts.value.filterNot { it.id == host.id }
-        storageMutex.withLock { store.save(updated, state.value.host?.id?.takeUnless { it == host.id }); hosts.value = updated }
+    suspend fun editHostName(host: Host, name: String) {
+        require(name.isNotBlank()) { "请输入主机名称" }
+        updateSavedHost(host.id) { it.copy(name = name.trim(), automaticName = false) }
+    }
+    fun setHostAppearance(host: Host, color: String = host.color, badgeDisplay: String = host.badgeDisplay) = action {
+        updateSavedHost(host.id) { it.copy(color = color, badgeDisplay = badgeDisplay) }
+    }
+    private suspend fun updateSavedHost(id: String, change: (Host) -> Host) {
+        storageMutex.withLock {
+            val updated = hosts.value.map { if (it.id == id) change(it) else it }
+            store.save(updated, state.value.host?.id)
+            hosts.value = updated
+            updated.find { it.id == id }?.let(repository::updateHostProfile)
+        }
+    }
+    suspend fun probeHostConnections(host: Host): Map<String, Long?> = coroutineScope {
+        if (!networkAccess(host)) return@coroutineScope host.savedConnections().associate { it.id to null }
+        host.connectionCandidates().map { candidate -> async(Dispatchers.IO) {
+            val probe = DaemonSocket()
+            val latency = try {
+                val info = probe.open(candidate, timeoutMs = 6_000)
+                val expected = host.serverId ?: host.relay?.serverId
+                require(expected == null || expected == info.string("serverId")) { "主机身份不一致" }
+                val start = System.nanoTime()
+                probe.ping()
+                (System.nanoTime() - start) / 1_000_000
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+            finally { probe.close() }
+            candidate.url to latency
+        } }.awaitAll().toMap()
+    }
+    suspend fun performHostLifecycle(host: Host, operation: String) {
+        require(state.value.host?.id == host.id) { "请先连接此主机" }
+        repository.performHostLifecycle(operation)
+    }
+    suspend fun removeSavedConnection(host: Host, connectionId: String) {
+        val current = hosts.value.find { it.id == host.id } ?: return
+        val remaining = current.savedConnections().filterNot { it.id == connectionId }
+        if (remaining.isEmpty()) { removeSavedHost(current); return }
+        val primary = remaining.first()
+        val updatedHost = current.normalized().copy(url = primary.url, relay = primary.relay, connections = remaining)
+        updateSavedHost(current.id) { it.copy(url = primary.url, relay = primary.relay, directUrl = null, connections = remaining) }
+        if (state.value.host?.id == current.id && state.value.activeConnectionUrl == connectionId)
+            repository.connect(updatedHost, state.value.workspaceSelection())
+    }
+    suspend fun removeSavedHost(host: Host) {
+        storageMutex.withLock {
+            val updated = hosts.value.filterNot { it.id == host.id }
+            store.save(updated, state.value.host?.id?.takeUnless { it == host.id })
+            hosts.value = updated
+        }
         if (workspaceSelectionStore.selection?.hostId == host.id) workspaceSelectionStore.clear()
         conversations.forgetHost(host.id)
         if (state.value.host?.id == host.id) { navigate("hosts"); repository.disconnect() }
     }
+    fun deleteHost(host: Host) = action { removeSavedHost(host) }
     private suspend fun persist(id: String?) = storageMutex.withLock { store.save(hosts.value, id) }
     fun openWorkspace(workspace: Workspace) {
         cancelPendingNavigation()

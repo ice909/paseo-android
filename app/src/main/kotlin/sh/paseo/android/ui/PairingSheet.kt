@@ -39,7 +39,7 @@ import sh.paseo.android.R
 /** The native counterpart of PairLinkModal / AddHostModal. Host editing stays separate. */
 @Composable
 fun PairingSheet(vm: AppViewModel, direct: Boolean = false, initialLink: String = "", passwordRequired: Boolean = false,
-    chooseMethod: Boolean = false, onScanQr: () -> Unit = {}, onDismiss: () -> Unit, onSaved: () -> Unit = onDismiss) {
+    chooseMethod: Boolean = false, targetHostId: String? = null, onScanQr: () -> Unit = {}, onDismiss: () -> Unit, onSaved: () -> Unit = onDismiss, onHostSaved: ((sh.paseo.android.core.Host) -> Unit)? = null) {
     val p = LocalPaseoPalette.current
     val saving by vm.pairingBusy.collectAsStateWithLifecycle()
     val error by vm.pairingError.collectAsStateWithLifecycle()
@@ -62,6 +62,11 @@ fun PairingSheet(vm: AppViewModel, direct: Boolean = false, initialLink: String 
     val contentHeight = ((LocalConfiguration.current.screenHeightDp * if (expanded) .9f else .65f).dp - 24.dp - bottomInset).coerceAtLeast(120.dp)
     fun clear(resetPassword: Boolean = false) { localError = null; vm.clearPairingError(resetPassword) }
     fun dismiss() { if (!saving) { vm.cancelPairing(); onDismiss() } }
+    fun cancel() {
+        if (saving) return
+        if (chooseMethod && directMode != null) { directMode = null; clear(resetPassword = true) }
+        else dismiss()
+    }
     fun submit() {
         localError = null
         val address = if (isDirect) {
@@ -74,7 +79,7 @@ fun PairingSheet(vm: AppViewModel, direct: Boolean = false, initialLink: String 
             }
         } else link.trim()
         if (address.isBlank()) { localError = "请粘贴配对链接（.../#offer=...）"; return }
-        vm.saveHost(null, "", address, password, onSaved)
+        vm.saveHost(targetHostId, "", address, password, onSaved, onHostSaved)
     }
     LaunchedEffect(Unit) {
         if (!passwordRequired) vm.clearPairingError(resetPassword = true)
@@ -86,7 +91,7 @@ fun PairingSheet(vm: AppViewModel, direct: Boolean = false, initialLink: String 
         confirmValueChange = { it != SheetValue.Hidden || !saving })
     ModalBottomSheet(onDismissRequest = ::dismiss, sheetState = sheet, containerColor = p.surface0, contentColor = p.foreground,
         sheetMaxWidth = Dp.Unspecified,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp), scrimColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = .55f),
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp), scrimColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = .45f),
         properties = ModalBottomSheetProperties(isAppearanceLightStatusBars = !p.dark, isAppearanceLightNavigationBars = !p.dark),
         dragHandle = { Box(Modifier.fillMaxWidth().height(24.dp)
             .semantics { contentDescription = if (expanded) "收起连接面板" else "展开连接面板" }
@@ -170,7 +175,7 @@ fun PairingSheet(vm: AppViewModel, direct: Boolean = false, initialLink: String 
                     }
                     (localError ?: error)?.let { Text(it, style = PaseoUiText, color = p.destructive, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
                     Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        PaseoButton("取消", ::dismiss, Modifier.weight(1f), primary = false, enabled = !saving)
+                        PaseoButton("取消", ::cancel, Modifier.weight(1f), primary = false, enabled = !saving)
                         PaseoButton(if (saving) { if (isDirect) "正在连接..." else "正在配对..." } else if (isDirect) "连接" else "配对",
                             ::submit, Modifier.weight(1f), icon = if (isDirect) R.drawable.lucide_link_2 else R.drawable.lucide_link, enabled = !saving)
                     }
@@ -210,7 +215,7 @@ private fun PairingField(label: String, value: String, onValueChange: (String) -
 }
 
 @Composable
-private fun PairingInput(value: String, onValueChange: (String) -> Unit, placeholder: String, label: String, modifier: Modifier = Modifier,
+internal fun PairingInput(value: String, onValueChange: (String) -> Unit, placeholder: String, label: String, modifier: Modifier = Modifier,
     enabled: Boolean, keyboardType: KeyboardType, visualTransformation: VisualTransformation = VisualTransformation.None, onSubmit: () -> Unit = {}) {
     val p = LocalPaseoPalette.current
     BasicTextField(value, onValueChange, modifier.fillMaxWidth().background(p.surface2, RoundedCornerShape(8.dp)).border(1.dp, p.border, RoundedCornerShape(8.dp))

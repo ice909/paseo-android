@@ -35,7 +35,7 @@ class HostStore(context: Context) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
         val payload = wireJson.parseToJsonElement(cipher.doFinal(bytes.copyOfRange(12, bytes.size)).decodeToString()).jsonObject
-        Saved(wireJson.decodeFromJsonElement<List<Host>>(payload.getValue("hosts")), payload.string("lastHostId").ifBlank { null })
+        Saved(wireJson.decodeFromJsonElement<List<Host>>(payload.getValue("hosts")).map { it.normalized() }, payload.string("lastHostId").ifBlank { null })
     }
     suspend fun save(hosts: List<Host>, lastHostId: String?) = withContext(Dispatchers.IO) {
         val payload = jsonObject("hosts" to wireJson.encodeToJsonElement(hosts), "lastHostId" to lastHostId)

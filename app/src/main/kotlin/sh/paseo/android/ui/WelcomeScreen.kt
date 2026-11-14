@@ -44,13 +44,13 @@ fun PaseoText(text: String, modifier: Modifier = Modifier, style: TextStyle = Pa
 
 @Composable
 fun PaseoButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier,
-    @DrawableRes icon: Int? = null, primary: Boolean = true, enabled: Boolean = true, welcome: Boolean = false) {
+    @DrawableRes icon: Int? = null, primary: Boolean = true, enabled: Boolean = true, welcome: Boolean = false, destructive: Boolean = false) {
     val p = LocalPaseoPalette.current
     val shape = RoundedCornerShape(if (welcome) 12.dp else 8.dp)
-    val background = if (primary) p.accent else if (welcome) p.surface2 else p.surface3
+    val background = if (destructive) p.destructive else if (primary) p.accent else if (welcome) p.surface2 else p.surface3
     val foreground = if (primary) p.accentForeground else p.foreground
     Row(modifier.alpha(if (enabled) 1f else .5f).clip(shape).background(background)
-        .border(1.dp, if (primary) p.accent else if (welcome) p.border else p.surface3, shape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .border(1.dp, if (destructive) p.destructive else if (primary) p.accent else if (welcome) p.border else p.surface3, shape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .defaultMinSize(minHeight = 44.dp).padding(horizontal = 16.dp, vertical = if (welcome) 16.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (welcome) 12.dp else 8.dp, Alignment.CenterHorizontally)) {
         if (icon != null) PaseoGlyph(icon, tint = foreground, modifier = Modifier.size(if (welcome) 18.dp else 16.dp))

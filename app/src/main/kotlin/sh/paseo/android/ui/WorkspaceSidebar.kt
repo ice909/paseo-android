@@ -172,12 +172,12 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                             items(workspaces, key = { "workspace:${it.id}" }) { workspace ->
                                 SidebarWorkspaceRow(workspace, workspace.id == state.selectedWorkspaceId, workspace.id == dragging,
                                     workspaceTitle(workspace, sidebarPreferences.titleSource),
-                                    workspaceDetails(workspace, sidebarPreferences.rowItems, state.host?.displayName),
+                                    workspaceDetails(workspace, sidebarPreferences.rowItems, null),
                                     active, sidebarPreferences.sort, emptyList(), onOpen,
                                     onRename = { edit = workspace },
                                     onPin = { vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } },
                                     onCopyPath = { clipboard.setText(AnnotatedString(workspace.cwd)) },
-                                    onArchive = { archive = workspace }, connected = state.connected)
+                                    onArchive = { archive = workspace }, connected = state.connected, hostBadge = state.host?.takeIf { "host" in sidebarPreferences.rowItems })
                             }
                         }
                 } else {
@@ -219,13 +219,13 @@ fun WorkspaceSidebar(vm: AppViewModel, state: PaseoState, active: Boolean, onClo
                                     val peers = workspaces.filter { (it.pinnedAt == null) == (workspace.pinnedAt == null) }
                                     SidebarWorkspaceRow(workspace, workspace.id == state.selectedWorkspaceId, workspace.id == dragging,
                                         workspaceTitle(workspace, sidebarPreferences.titleSource),
-                                        workspaceDetails(workspace, sidebarPreferences.rowItems, state.host?.displayName),
+                                        workspaceDetails(workspace, sidebarPreferences.rowItems, null),
                                         active, sidebarPreferences.sort, peers, onOpen,
                                         onMove = ::move,
                                         onRename = { edit = workspace },
                                         onPin = { vm.action { vm.repository.pinWorkspace(workspace.id, workspace.pinnedAt == null) } },
                                         onCopyPath = { clipboard.setText(AnnotatedString(workspace.cwd)) },
-                                        onArchive = { archive = workspace }, connected = state.connected)
+                                        onArchive = { archive = workspace }, connected = state.connected, hostBadge = state.host?.takeIf { "host" in sidebarPreferences.rowItems })
                                 }
                                 if (initiallyVisibleWorkspaces.size < allWorkspaces.size) {
                                     item("workspace-toggle:${project.projectId}") {
@@ -312,6 +312,7 @@ private fun SidebarWorkspaceRow(
     onCopyPath: () -> Unit,
     onArchive: () -> Unit,
     connected: Boolean,
+    hostBadge: Host? = null,
 ) {
     val palette = LocalPaseoPalette.current
     var menu by remember { mutableStateOf(false) }
@@ -336,7 +337,13 @@ private fun SidebarWorkspaceRow(
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
             Text(title, fontSize = 14.sp, lineHeight = 20.sp, color = palette.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (details.isNotBlank()) Text(details, fontSize = 11.sp, lineHeight = 14.sp, color = palette.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (details.isNotBlank() || hostBadge?.badgeDisplay?.let { it != "hidden" } == true) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (details.isNotBlank()) Text(details, Modifier.weight(1f, fill = false), fontSize = 11.sp,
+                        lineHeight = 14.sp, color = palette.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    hostBadge?.let { HostIdentityBadge(it) }
+                }
+            }
         }
         if (workspace.pinnedAt != null) PaseoGlyph(PaseoIcons.Pin, "已固定", Modifier.size(12.dp))
         Box {

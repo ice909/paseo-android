@@ -1,14 +1,13 @@
 package sh.paseo.android.core
 
 import java.io.IOException
-import kotlin.math.min
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 
 /** One active host, one catalog subscription, and one viewed timeline. No Android dependencies. */
-class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
+class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
     companion object {
         const val PCM_FORMAT = "audio/pcm;rate=16000;bits=16"
         const val MAX_DISPLAY_IMAGE_BYTES = 12 * 1024 * 1024
@@ -30,12 +29,20 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
     private var creationLifecycle = false
     private val reconnectRequests = Channel<Unit>(Channel.CONFLATED)
 
-    init { scope.launch { socket.messages.collect { message ->
-        try { handle(message); _events.emit(message) } catch (error: Exception) { report(error) }
-    } } }
+    private var socketMessages: Job? = null
+    private fun collectSocketMessages() {
+        socketMessages?.cancel()
+        val currentSocket = socket
+        socketMessages = scope.launch {
+            currentSocket.messages.collect { message ->
+                try { handle(message); _events.emit(message) } catch (error: Exception) { report(error) }
+            }
+        }
+    }
+    init { collectSocketMessages() }
 
     @Synchronized
-    fun connect(host: Host, restore: WorkspaceSelection? = null) {
+    fun connect(host: Host, restore: WorkspaceSelection? = null, initialConnectionUrl: String? = null) {
         connectionJob?.cancel()
         socket.disconnect()
         timelineJob?.cancel()
@@ -49,45 +56,32 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             connection = ConnectionStatus.Connecting)
         connectionJob = scope.launch {
             buffer.clear()
-            var attempt = 0
+            var offlineSince = System.nanoTime() / 1_000_000
+            var nextConnectionUrl = initialConnectionUrl
             while (isActive) {
                 try {
                     catalogSubscription = null
                     timelineSubscription = null
                     workspaceSubscription = null
-                    var info: JsonObject? = null
-                    var connectedHost: Host? = null
-                    var lastConnectionError: Exception? = null
-                    for (candidate in host.connectionCandidates()) {
-                        try {
-                            val candidateInfo = socket.open(candidate,
-                                timeoutMs = if (candidate.relay == null && host.relay != null) 6_000 else 20_000)
-                            val expectedServerId = host.relay?.serverId
-                            val actualServerId = candidateInfo.string("serverId")
-                            if (candidate.relay == null && expectedServerId != null &&
-                                actualServerId != expectedServerId) {
-                                socket.disconnect()
-                                throw AuthenticationException("局域网地址连接到的不是配对中的主机", AuthFailure.Security)
-                            }
-                            info = candidateInfo
-                            connectedHost = candidate
-                            break
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (error: AuthenticationException) {
-                            if (candidate.relay == null && error.reason == AuthFailure.Security) throw error
-                            lastConnectionError = error
-                            socket.disconnect()
-                        } catch (error: Exception) {
-                            lastConnectionError = error
-                            socket.disconnect()
-                        }
+                    val preferred = nextConnectionUrl
+                    nextConnectionUrl = null
+                    val profile = state.value.host?.takeIf { it.id == host.id } ?: host
+                    val preferredHost = profile.connectionCandidates().find { it.url == preferred }
+                    val opened = openHostConnection(preferredHost ?: profile, socket) { url, latency ->
+                        _state.update { it.copy(connectionLatencyMs = it.connectionLatencyMs + (url to latency)) }
                     }
-                    val activeInfo = info ?: throw lastConnectionError ?: IOException("没有可用的主机连接")
-                    val activeHost = connectedHost ?: host
+                    if (opened.socket !== socket) {
+                        socketMessages?.cancel()
+                        socket.close()
+                        socket = opened.socket
+                        collectSocketMessages()
+                    }
+                    val activeHost = opened.host
+                    val activeInfo = opened.info
                     creationLifecycle = activeInfo.obj("features").bool("creationLifecycle")
                     _state.update { it.copy(activeConnectionUrl = activeHost.url, connection = ConnectionStatus.Connected,
                         serverName = activeInfo.string("hostname").ifBlank { host.name }, serverId = activeInfo.string("serverId"),
+                        serverVersion = activeInfo.string("version"), desktopManaged = activeInfo.bool("desktopManaged"),
                         features = activeInfo.obj("features"), capabilities = activeInfo.obj("capabilities"), error = null) }
                     coroutineScope {
                         launch {
@@ -103,7 +97,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     }
                     if (state.value.restoringWorkspace != null) restoreWorkspace()
                     else state.value.selectedAgentId?.let { selectAgent(it) }
-                    attempt = 0
+                    offlineSince = System.nanoTime() / 1_000_000
                     coroutineScope {
                         // Provider discovery can probe installed CLIs. It must not gate restoration
                         // or tear down an authenticated connection when a provider probe fails.
@@ -114,36 +108,54 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                                 _state.update { it.copy(providers = providers) }
                             } catch (error: Exception) { report(error) }
                         }
-                        val localProbe = if (activeHost.relay != null && !host.directUrl.isNullOrBlank()) launch {
+                        val connectionProbe = launch {
+                            // Follow the official hysteresis: switch only after three probes improve by >=40ms.
+                            val switchPolicy = ConnectionSwitchPolicy()
+                            val latencies = mutableMapOf<String, Long>()
+                            val lastProbed = mutableMapOf<String, Long>()
+                            val firstSeen = System.nanoTime() / 1_000_000
                             while (isActive) {
-                                delay(30_000)
-                                val probe = DaemonSocket()
-                                try {
-                                    val info = probe.open(host.copy(url = host.directUrl, relay = null), timeoutMs = 6_000)
-                                    val expectedServerId = host.relay?.serverId
-                                    if (expectedServerId != null && info.string("serverId") == expectedServerId) {
-                                        val current = state.value
-                                        if (current.host?.id == host.id && current.connection == ConnectionStatus.Connected) {
-                                            connect(host, current.workspaceSelection())
-                                            return@launch
-                                        }
-                                    }
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (_: Exception) {
-                                    // A failed local probe leaves the working relay connection untouched.
-                                } finally {
-                                    probe.close()
+                                delay(2_000)
+                                val now = System.nanoTime() / 1_000_000
+                                val profile = state.value.host?.takeIf { it.id == host.id } ?: host
+                                val due = profile.connectionCandidates().filter { candidate ->
+                                    val previous = lastProbed[candidate.url]
+                                    previous == null || now - previous >= connectionProbeInterval(now - firstSeen, candidate.url == activeHost.url, true)
+                                }
+                                if (due.isEmpty()) continue
+                                coroutineScope {
+                                    due.forEach { candidate -> launch {
+                                        lastProbed[candidate.url] = now
+                                        val probe = DaemonSocket()
+                                        try {
+                                            val info = probe.open(candidate, timeoutMs = 6_000)
+                                            verifyHostIdentity(host, info.string("serverId"))
+                                            val start = System.nanoTime()
+                                            probe.ping()
+                                            val latency = (System.nanoTime() - start) / 1_000_000
+                                            latencies[candidate.url] = latency
+                                            _state.update { it.copy(connectionLatencyMs = it.connectionLatencyMs + (candidate.url to latency)) }
+                                        } catch (cancelled: CancellationException) { throw cancelled }
+                                        catch (_: Exception) {
+                                            latencies.remove(candidate.url)
+                                            _state.update { it.copy(connectionLatencyMs = it.connectionLatencyMs + (candidate.url to null)) }
+                                        } finally { probe.close() }
+                                    } }
+                                }
+                                switchPolicy.next(activeHost.url, latencies)?.let { next ->
+                                    connect(state.value.host ?: host, state.value.workspaceSelection(), next)
+                                    return@launch
                                 }
                             }
-                        } else null
+                        }
                         try { socket.connected.first { !it } }
-                        finally { localProbe?.cancel() }
+                        finally { connectionProbe.cancel() }
                     }
                 } catch (cancelled: CancellationException) {
                     if (!isActive) throw cancelled
                     _state.update { it.copy(error = "连接或请求超时") }
                 } catch (error: AuthenticationException) {
+                    socket.disconnect()
                     _state.update { it.copy(connection = ConnectionStatus.Disconnected, error = error.message) }
                     return@launch
                 } catch (error: Exception) {
@@ -156,7 +168,7 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                     connection = ConnectionStatus.Reconnecting,
                     loadingTimeline = it.selectedAgentId != null,
                 ) }
-                withTimeoutOrNull(min(30_000L, 1_000L shl min(attempt++, 5))) {
+                withTimeoutOrNull(connectionProbeInterval(System.nanoTime() / 1_000_000 - offlineSince, false, false)) {
                     reconnectRequests.receive()
                 }
             }
@@ -205,6 +217,56 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
             reconnectRequests.trySend(Unit)
         }
     }
+    fun updateHostProfile(host: Host) {
+        _state.update { if (it.host?.id == host.id) it.copy(host = host) else it }
+    }
+
+    suspend fun performHostLifecycle(operation: String) {
+        require(operation in setOf("restart", "killTerminals", "update")) { "未知主机操作" }
+        val original = state.value
+        val hostId = original.host?.id ?: error("主机未连接")
+        check(original.connected && original.features.bool("daemonStatusRpc")) { "请更新并连接主机以读取服务状态" }
+        if (operation == "update") check(original.features.bool("daemonSelfUpdate") && !original.desktopManaged) { "此主机不支持自行更新" }
+        suspend fun status(): JsonObject {
+            check(state.value.host?.id == hostId) { "当前主机已切换" }
+            if (!state.value.connected) throw IOException("主机正在重连")
+            val info = socket.request("daemon.get_status.request")
+            check(info.string("serverId") == original.serverId) { "主机身份已改变" }
+            check(info.long("pid") != null) { "主机未返回服务进程标识" }
+            return info
+        }
+        val previous = status()
+        var installedVersion: String? = null
+        try {
+            if (operation == "update") {
+                val result = socket.request("daemon.update.request")
+                check(result.bool("success")) { result.string("error").ifBlank { "更新失败" } }
+                installedVersion = result.string("newVersion")
+            } else socket.request("restart_server_request", "reason" to "settings_daemon_restart_${original.serverId}",
+                "killTerminals" to true.takeIf { operation == "killTerminals" })
+        } catch (timeout: TimeoutCancellationException) {
+            if (operation == "update") throw timeout
+        } catch (error: IOException) {
+            if (operation == "update" || socket.connected.value) throw error
+        }
+        withTimeout(600_000) {
+            while (true) {
+                val replacement = try { status() }
+                catch (timeout: TimeoutCancellationException) { null }
+                catch (error: IOException) { if (socket.connected.value) throw error else null }
+                if (replacement != null && replacement.long("pid") != previous.long("pid")) {
+                    if (operation == "update") check(!installedVersion.isNullOrBlank() && replacement.string("version") == installedVersion) {
+                        "已安装更新，但未确认新服务的版本"
+                    }
+                    if (operation == "killTerminals") check(replacement.array("terminalCleanupUnconfirmed").isEmpty()) {
+                        "主机已重启，但以下终端进程尚未确认关闭：${replacement.array("terminalCleanupUnconfirmed")}" }
+                    return@withTimeout
+                }
+                delay(250)
+            }
+        }
+    }
+
     fun clearError() { _state.update { it.copy(error = null) } }
 
     @Synchronized
@@ -330,7 +392,10 @@ class PaseoRepository(private val socket: DaemonSocket = DaemonSocket()) {
                 }
             } catch (error: Exception) { report(error) }
             finally {
-                if (isActive && state.value.host?.id == hostId && state.value.selectedAgentId == agentId) _state.update { it.copy(loadingTimeline = false) }
+                if (isActive) _state.update { current ->
+                    if (current.host?.id == hostId && current.selectedAgentId == agentId && current.connected)
+                        current.copy(loadingTimeline = false) else current
+                }
             }
         }
     }

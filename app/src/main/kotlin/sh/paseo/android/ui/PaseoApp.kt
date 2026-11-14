@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.sp
@@ -242,7 +243,7 @@ fun PaseoApp(
                         onDirect = { openPairing(direct = true); showHostEditor = true },
                         onPasteLink = { openPairing(); showHostEditor = true },
                         onSettings = ::openSettings)
-                    screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { openPairing(chooseMethod = true); showHostEditor = true }, { editingHostId = it.id; showHostEditor = true }, vm::deleteHost)
+                    screen == "hosts" -> HostsScreen(hosts, state, vm::connect, { openPairing(chooseMethod = true); showHostEditor = true }, { editingHostId = it.id; showHostEditor = true })
                     screen == "chat" && workspace != null && !createAgent -> if (terminal) TerminalPane(vm, workspace.context, state.connected, Modifier.fillMaxSize()) else ChatScreen(vm, state, snackbar, onCreateAgent = { createAgent = true }, topOverlayInset = topOverlayInset, expanded = composerFullscreen, onFullscreenChange = { composerFullscreen = it })
                     else -> NewWorkspaceScreen(vm, state, if (createAgent) workspace else null, newProject, onManageHosts = { navigate("hosts") }, onImportCwd = { importCwd = it }) { launchTerminal -> createAgent = false; terminal = launchTerminal }
                 } }
@@ -294,7 +295,6 @@ fun PaseoApp(
                 ListItem(
                     colors = paseoListItemColors(),
                     headlineContent = { Text(host.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(host.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = { PaseoGlyph(PaseoIcons.Server, null, tint = LocalPaseoPalette.current.foregroundMuted) },
                     trailingContent = { if (host.id == state.host?.id) PaseoGlyph(PaseoIcons.Check, "当前主机") },
                     modifier = Modifier.clickable {
@@ -316,7 +316,7 @@ fun PaseoApp(
         }
     }
     if (showHostEditor && (editingHostId == null || editingHost != null)) {
-        if (editingHost != null) HostEditor(vm, editingHost) { showHostEditor = false }
+        if (editingHost != null) LaunchedEffect(editingHost.id) { openHostSettings(editingHost); showHostEditor = false; editingHostId = null }
         else PairingSheet(vm, direct = directPairing, chooseMethod = choosePairingMethod,
             onScanQr = { showHostEditor = false; openPairScanner() },
             onDismiss = { choosePairingMethod = false; showHostEditor = false })
@@ -373,55 +373,23 @@ fun ConnectionStrip(state: PaseoState, onClick: () -> Unit = {}) {
 }
 
 @Composable
-private fun HostsScreen(hosts: List<Host>, state: PaseoState, onConnect: (Host) -> Unit, onAdd: () -> Unit, onEdit: (Host) -> Unit, onDelete: (Host) -> Unit) {
-    var deleting by remember { mutableStateOf<Host?>(null) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            Column(Modifier.padding(top = 24.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                    PaseoGlyph(PaseoIcons.Server, null, Modifier.padding(20.dp).size(32.dp), tint = MaterialTheme.colorScheme.primary)
-                }
-                Text(if (hosts.isEmpty()) "将工作带在身边" else "你的主机", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                Text("连接运行 Paseo 的电脑，继续与编码代理协作。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
+private fun HostsScreen(hosts: List<Host>, state: PaseoState, onConnect: (Host) -> Unit, onAdd: () -> Unit, onEdit: (Host) -> Unit) {
+    val palette = LocalPaseoPalette.current
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text("主机", Modifier.padding(start = 4.dp, bottom = 4.dp), style = MaterialTheme.typography.bodySmall, color = palette.foregroundMuted) }
         items(hosts, key = { it.id }) { host ->
-            OutlinedCard(onClick = { onConnect(host) }, modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    PaseoGlyph(PaseoIcons.Monitor, null, tint = MaterialTheme.colorScheme.primary)
-                    Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(host.displayName, style = MaterialTheme.typography.titleMedium)
-                        Text(host.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (host.id == state.host?.id && state.connected) Text(
-                            if (host.relay == null || host.directUrl == state.activeConnectionUrl) "已连接 · 局域网直连" else "已连接 · 中继",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                        if (host.directUrl != null) Text("已配置局域网优先，连接失败时回退中继", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = { onEdit(host) }) { PaseoGlyph(PaseoIcons.Pencil, "编辑 ${host.displayName}", Modifier.size(20.dp)) }
-                    IconButton(onClick = { deleting = host }) { PaseoGlyph(PaseoIcons.Trash2, "移除 ${host.displayName}", Modifier.size(20.dp)) }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(palette.surface1)
+                .border(1.dp, palette.border, RoundedCornerShape(8.dp)).clickable { onConnect(host) }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PaseoGlyph(PaseoIcons.Server, null, Modifier.size(18.dp), hostIdentityColor(host.color))
+                Text(host.displayName, Modifier.weight(1f), style = PaseoUiText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (host.id == state.host?.id && state.connected) StatusDot()
+                Box(Modifier.size(32.dp).clickable { onEdit(host) }, contentAlignment = Alignment.Center) {
+                    PaseoGlyph(PaseoIcons.Settings, "${host.displayName} 设置", Modifier.size(18.dp), palette.foregroundMuted)
                 }
             }
         }
-        item { FilledTonalButton(onClick = onAdd, modifier = Modifier.fillMaxWidth().height(50.dp)) { PaseoGlyph(PaseoIcons.Plus, null); Spacer(Modifier.width(8.dp)); Text("添加主机") } }
-        item {
-            Column(Modifier.padding(top = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("开始连接", style = MaterialTheme.typography.titleSmall)
-                HelpStep("1", "在电脑上安装并启动 Paseo。")
-                HelpStep("2", "在电脑上选择「配对设备」，复制配对链接。")
-                HelpStep("3", "点击「添加主机」，粘贴链接并连接。")
-            }
-        }
-    }
-    deleting?.let { host -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("移除 ${host.displayName}？") }, text = { Text("移除本机保存的连接配置。") },
-        confirmButton = { TextButton(onClick = { onDelete(host); deleting = null }) { Text("移除") } },
-        dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } }) }
-}
-
-@Composable
-private fun HelpStep(number: String, text: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(number, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        item { PaseoButton("添加主机", onAdd, Modifier.fillMaxWidth(), icon = PaseoIcons.Plus, primary = false) }
     }
 }
 
@@ -443,54 +411,6 @@ fun EmptyState(icon: Int, title: String, description: String, modifier: Modifier
             Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
-}
-
-@Suppress("DEPRECATION")
-@Composable
-private fun HostEditor(vm: AppViewModel, host: Host?, onDismiss: () -> Unit) {
-    var name by rememberSaveable { mutableStateOf(host?.takeUnless { it.automaticName }?.name.orEmpty()) }
-    var address by rememberSaveable { mutableStateOf(host?.relay?.pairingLink() ?: host?.url.orEmpty()) }
-    var directAddress by rememberSaveable { mutableStateOf(host?.directUrl.orEmpty()) }
-    var password by rememberSaveable { mutableStateOf(host?.password.orEmpty()) }
-    var manual by rememberSaveable { mutableStateOf(host != null && host.relay == null) }
-    var more by rememberSaveable { mutableStateOf(false) }
-    var visible by remember { mutableStateOf(false) }
-    val saving by vm.pairingBusy.collectAsStateWithLifecycle()
-    val error by vm.pairingError.collectAsStateWithLifecycle()
-    val needsPassword by vm.pairingPasswordNeeded.collectAsStateWithLifecycle()
-    val clipboard = LocalClipboardManager.current
-    fun dismiss() { vm.cancelPairing(); onDismiss() }
-    fun changeAddress(text: String) { address = text; password = ""; vm.clearPairingError(resetPassword = true) }
-    LaunchedEffect(Unit) { vm.clearPairingError(resetPassword = true) }
-    AlertDialog(onDismissRequest = ::dismiss, title = { Text(if (manual) "手动连接" else "粘贴配对链接") },
-        text = { Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (manual) "使用电脑的局域网、VPN 或 Tailscale 地址。" else "复制电脑上 Paseo 提供的配对链接，粘贴后即可连接。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(address, ::changeAddress, label = { Text(if (manual) "主机地址" else "配对链接") },
-                placeholder = { Text(if (manual) "192.168.1.10:6767" else "https://app.paseo.sh/#offer=…") },
-                modifier = Modifier.fillMaxWidth(), maxLines = 3, isError = error != null && !needsPassword, enabled = !saving,
-                trailingIcon = { IconButton(onClick = { clipboard.getText()?.text?.let(::changeAddress) }, enabled = !saving) { PaseoGlyph(PaseoIcons.ClipboardPaste, "从剪贴板粘贴链接") } })
-            if (host != null) OutlinedTextField(directAddress, { directAddress = it; vm.clearPairingError() },
-                label = { Text("局域网直连地址（可选）") }, placeholder = { Text("192.168.1.10:6767") },
-                supportingText = { Text("保存配对链接后，优先使用此地址；局域网不可达时自动回退中继。") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !saving)
-            if (manual || needsPassword) OutlinedTextField(password, { password = it; vm.clearPairingError() }, label = { Text(if (needsPassword) "主机密码" else "密码（可选）") }, singleLine = true, enabled = !saving,
-                modifier = Modifier.fillMaxWidth(), visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = { IconButton(onClick = { visible = !visible }) { PaseoGlyph(if (visible) PaseoIcons.EyeOff else PaseoIcons.Eye, "显示或隐藏密码") } })
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            if (saving) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("正在验证并连接主机…", style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = { more = !more }, enabled = !saving) { Text(if (more) "收起更多选项" else "更多选项") }
-            if (more) {
-                OutlinedTextField(name, { name = it }, label = { Text("主机名称（可选）") }, supportingText = { Text("留空时使用电脑的名称") }, singleLine = true, enabled = !saving, modifier = Modifier.fillMaxWidth())
-                TextButton(onClick = { manual = !manual; vm.clearPairingError(resetPassword = true) }, enabled = !saving) { Text(if (manual) "使用配对链接" else "手动输入地址") }
-            }
-        } },
-        confirmButton = { TextButton(enabled = address.isNotBlank() && !saving, onClick = {
-            vm.saveHost(host?.id, name, address, password, directAddress, onDismiss)
-        }) { Text(if (saving) "连接中…" else "连接") } },
-        dismissButton = { TextButton(onClick = ::dismiss) { Text("取消") } })
 }
 
 @Composable

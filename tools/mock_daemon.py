@@ -184,6 +184,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send("file.upload.response", requestId=req, error=None, file=dict(type="uploaded_file", id=req, fileName=upload["fileName"], mimeType=upload["mimeType"], size=len(raw), path="/fixture/uploads/" + req))
 
     def handle_frame(self, frame):
+        if frame.get("type") == "ping":
+            self.write_frame(json.dumps(dict(type="pong")))
+            return
         if frame.get("type") == "hello":
             if frame.get("auth", {}).get("password") != "test":
                 self.write_frame(json.dumps(dict(type="hello.rejected", reason="incorrect_password", accepts=["password"])))

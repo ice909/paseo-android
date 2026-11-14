@@ -50,7 +50,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
-fun PairScanScreen(vm: AppViewModel, onBack: () -> Unit, onPaired: () -> Unit) {
+fun PairScanScreen(vm: AppViewModel, onBack: () -> Unit, onPaired: () -> Unit, onPairedHost: ((sh.paseo.android.core.Host) -> Unit)? = null) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val p = LocalPaseoPalette.current
@@ -91,7 +91,7 @@ fun PairScanScreen(vm: AppViewModel, onBack: () -> Unit, onPaired: () -> Unit) {
                 CameraQrPreview(cameraAttempt, paused || busy || needsPassword, { raw ->
                     if (!paused && !busy) {
                         paused = true; link = raw
-                        try { require("#offer=" in raw || "#connect=" in raw || raw.startsWith("relay://")); Endpoint.parse(raw); vm.saveHost(null, "", raw, "", onPaired) }
+                        try { require("#offer=" in raw || "#connect=" in raw || raw.startsWith("relay://")); Endpoint.parse(raw); vm.saveHost(null, "", raw, "", onPaired, onPairedHost) }
                         catch (_: IllegalArgumentException) { cameraError = "无效的配对链接" }
                     }
                 }, { cameraError = it; paused = true })

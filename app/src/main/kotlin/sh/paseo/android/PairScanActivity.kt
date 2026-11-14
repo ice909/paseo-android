@@ -54,14 +54,16 @@ class PairScanActivity : ComponentActivity() {
                 PairScanScreen(vm, onBack = {
                     vm.cancelPairing()
                     finish()
-                }, onPaired = ::finish)
+                }, onPaired = ::finish, onPairedHost = if (intent.getBooleanExtra("from_settings", false)) {
+                    { host -> HostSettingsActivity.open(this, host.id, "connections") }
+                } else null)
             }
         }
     }
 
     companion object {
-        fun open(context: Context) {
-            context.startActivity(Intent(context, PairScanActivity::class.java))
+        fun open(context: Context, fromSettings: Boolean = false) {
+            context.startActivity(Intent(context, PairScanActivity::class.java).putExtra("from_settings", fromSettings))
         }
     }
 }

@@ -30,14 +30,14 @@ fun newId(): String = UUID.randomUUID().toString()
 data class Host(
     val id: String = newId(), val name: String, val url: String, val password: String = "",
     val relay: RelayOffer? = null, val automaticName: Boolean = false, val directUrl: String? = null,
+    val serverId: String? = null, val connections: List<HostConnection> = emptyList(),
+    val color: String = "none", val badgeDisplay: String = "name",
 ) {
     val displayName: String get() = name.ifBlank { relay?.serverId ?: runCatching { URI(url).host }.getOrNull() ?: "Paseo 主机" }
 }
 
-fun Host.connectionCandidates(): List<Host> {
-    val direct = directUrl?.takeIf { it.isNotBlank() } ?: return listOf(this)
-    if (relay == null) return listOf(this)
-    return listOf(copy(url = direct, relay = null), this)
+fun Host.connectionCandidates(): List<Host> = savedConnections().map {
+    copy(url = it.url, relay = it.relay, directUrl = null, connections = emptyList())
 }
 
 @Serializable
@@ -117,8 +117,9 @@ data class PaseoState(
     val serverId: String = "",
     val host: Host? = null,
     val activeConnectionUrl: String? = null,
+    val connectionLatencyMs: Map<String, Long?> = emptyMap(),
     val connection: ConnectionStatus = ConnectionStatus.Disconnected,
-    val serverName: String = "", val features: JsonObject = jsonObject(), val capabilities: JsonObject = jsonObject(),
+    val serverName: String = "", val serverVersion: String = "", val desktopManaged: Boolean = false, val features: JsonObject = jsonObject(), val capabilities: JsonObject = jsonObject(),
     val agents: List<Agent> = emptyList(),
     val nextAgentCursor: String? = null,
     val providers: List<Provider> = emptyList(),

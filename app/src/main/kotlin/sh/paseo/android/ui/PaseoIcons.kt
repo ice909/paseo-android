@@ -82,6 +82,10 @@ object PaseoIcons {
     @get:DrawableRes val SlidersHorizontal: Int get() = R.drawable.lucide_sliders_horizontal
     @get:DrawableRes val CircleAlert: Int get() = R.drawable.lucide_circle_alert
     @get:DrawableRes val Archive: Int get() = R.drawable.lucide_archive
+    @get:DrawableRes val Network: Int get() = R.drawable.lucide_network
+    @get:DrawableRes val Smartphone: Int get() = R.drawable.lucide_smartphone
+    @get:DrawableRes val Boxes: Int get() = R.drawable.lucide_boxes
+    @get:DrawableRes val Blocks: Int get() = R.drawable.lucide_blocks
     @get:DrawableRes val ZoomIn: Int get() = R.drawable.lucide_zoom_in
     @get:DrawableRes val ZoomOut: Int get() = R.drawable.lucide_zoom_out
     @get:DrawableRes val Scan: Int get() = R.drawable.lucide_scan
