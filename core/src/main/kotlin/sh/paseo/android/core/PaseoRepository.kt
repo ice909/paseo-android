@@ -7,7 +7,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 
 /** One active host, one catalog subscription, and one viewed timeline. No Android dependencies. */
-class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
+class PaseoRepository(private var socket: DaemonSocket = DaemonSocket(),
+    private val heartbeatIntervalMs: Long = 10_000, private val heartbeatTimeoutMs: Long = 15_000) {
     companion object {
         const val PCM_FORMAT = "audio/pcm;rate=16000;bits=16"
         const val MAX_DISPLAY_IMAGE_BYTES = 12 * 1024 * 1024
@@ -101,7 +102,7 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
                     resumeAgent?.let(::selectAgent)
                     offlineSince = System.nanoTime() / 1_000_000
                     coroutineScope {
-                        launch {
+                        val catalogJob = launch {
                             try {
                                 coroutineScope {
                                     launch {
@@ -120,7 +121,7 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
                         }
                         // Provider discovery can probe installed CLIs. It must not gate restoration
                         // or tear down an authenticated connection when a provider probe fails.
-                        launch {
+                        val providersJob = launch {
                             try {
                                 val result = socket.request("list_available_providers_request")
                                 val providers = result.array("providers").map { wireJson.decodeFromJsonElement<Provider>(it) }
@@ -167,8 +168,26 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
                                 }
                             }
                         }
+                        val heartbeat = launch {
+                            val token = socket.connectionToken()
+                            var failures = 0
+                            while (isActive) {
+                                delay(heartbeatIntervalMs)
+                                try {
+                                    socket.ping(timeoutMs = heartbeatTimeoutMs, expectedGeneration = token)
+                                    failures = 0
+                                } catch (_: TimeoutCancellationException) {
+                                    if (++failures >= 2) { reconnectIfCurrentConnectionFailed(token); return@launch }
+                                } catch (cancelled: CancellationException) { throw cancelled }
+                                catch (_: Exception) {
+                                    if (++failures >= 2) { reconnectIfCurrentConnectionFailed(token); return@launch }
+                                }
+                            }
+                        }
                         try { socket.connected.first { !it } }
-                        finally { connectionProbe.cancel() }
+                        finally {
+                            connectionProbe.cancel(); heartbeat.cancel(); catalogJob.cancel(); providersJob.cancel()
+                        }
                     }
                 } catch (cancelled: CancellationException) {
                     if (!isActive) throw cancelled

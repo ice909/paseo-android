@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class ReconnectTimelineTest {
-    private class Fixture(val coldPagesHeld: Boolean = false) : AutoCloseable {
+    private class Fixture(val coldPagesHeld: Boolean = false, val silentHeartbeat: Boolean = false) : AutoCloseable {
         val requests = CopyOnWriteArrayList<JsonObject>()
         val peers = CopyOnWriteArrayList<WebSocket>()
         val heldCatalog = CompletableDeferred<Unit>()
@@ -31,7 +31,7 @@ class ReconnectTimelineTest {
                             webSocket.send(DaemonSocketTest.session("status", jsonObject("status" to "server_info", "serverId" to "s")))
                             return
                         }
-                        if (frame.string("type") == "ping") { webSocket.send(jsonObject("type" to "pong").toString()); return }
+                        if (frame.string("type") == "ping") { if (!silentHeartbeat || connection != 1) webSocket.send(jsonObject("type" to "pong").toString()); return }
                         val message = frame.obj("message")
                         requests.add(message)
                         val type = message.string("type")
@@ -61,7 +61,7 @@ class ReconnectTimelineTest {
             }
         }
         val host = Host(id = "h", name = "Fixture", url = server.url("/ws").toString(), serverId = "s")
-        val repository = PaseoRepository()
+        val repository = if (silentHeartbeat) PaseoRepository(heartbeatIntervalMs = 100, heartbeatTimeoutMs = 100) else PaseoRepository()
         suspend fun connect() {
             repository.connect(host, WorkspaceSelection("h", "w", "a"))
             withTimeout(5_000) { repository.state.first { it.timeline.isNotEmpty() && !it.loadingTimeline } }
@@ -89,6 +89,15 @@ class ReconnectTimelineTest {
             f.releaseSubscription()
             withTimeout(5_000) { f.repository.state.first { !it.syncingTimeline } }
             assertEquals(ConnectionStatus.Connected, f.repository.state.value.connection)
+        }
+    }
+
+    @Test fun silentConnectionIsReplacedWithoutForegroundEvent() = runBlocking {
+        Fixture(silentHeartbeat = true).use { f ->
+            f.connect()
+            val state = f.newMessages()
+            assertEquals(ConnectionStatus.Connected, state.connection)
+            assertEquals("w", state.selectedWorkspaceId)
         }
     }
 
