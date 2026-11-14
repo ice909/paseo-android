@@ -77,7 +77,7 @@ class ConversationController(
     fun update(value: PaseoState) {
         snapshot = value
         val host = value.host?.id ?: return
-        if (value.recoveringForeground) return
+        if (value.recoveringForeground || value.syncingTimeline) return
         val running = value.agents.filter { it.running }.map { ConversationKey(host, it.id) }.toSet()
         val reconnected = value.connected && previousConnectedHost != host
         val discovered = value.agents.map { ConversationKey(host, it.id) }.filter { it !in knownAgents }.toSet()

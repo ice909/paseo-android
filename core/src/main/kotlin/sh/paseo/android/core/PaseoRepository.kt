@@ -59,11 +59,16 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         val selection = restore?.takeIf { it.hostId == host.id }
             ?: previous.workspaceSelection()?.takeIf { it.hostId == host.id }
             ?: previous.restoringWorkspace?.takeIf { it.hostId == host.id }
-        _state.value = PaseoState(host = host, restoringWorkspace = selection,
+        val reuseView = previous.host?.id == host.id && previous.selectedWorkspace != null &&
+            (restore == null || restore == previous.workspaceSelection())
+        _state.value = if (reuseView) previous.copy(host = host, connection = ConnectionStatus.Connecting,
+            activeConnectionUrl = null, error = null, restoringWorkspace = null,
+            loadingTimeline = previous.selectedAgentId != null, syncingTimeline = previous.selectedAgentId != null)
+        else PaseoState(host = host, restoringWorkspace = selection,
             selectedAgentId = previous.selectedAgentId.takeIf { selection == null && previous.host?.id == host.id },
             connection = ConnectionStatus.Connecting)
         connectionJob = scope.launch {
-            buffer.clear()
+            if (!reuseView) buffer.clear()
             var offlineSince = System.nanoTime() / 1_000_000
             var nextConnectionUrl = initialConnectionUrl
             while (isActive) {
@@ -88,25 +93,31 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
                     val activeInfo = opened.info
                     creationLifecycle = activeInfo.obj("features").bool("creationLifecycle")
                     _state.update { it.copy(activeConnectionUrl = activeHost.url, connection = ConnectionStatus.Connected,
+                        syncingTimeline = it.selectedAgentId != null,
                         serverName = activeInfo.string("hostname").ifBlank { host.name }, serverId = activeInfo.string("serverId"),
                         serverVersion = activeInfo.string("version"), desktopManaged = activeInfo.bool("desktopManaged"),
                         features = activeInfo.obj("features"), capabilities = activeInfo.obj("capabilities"), error = null) }
-                    coroutineScope {
-                        launch {
-                            fetchAgents(subscribe = true)
-                            val visited = mutableSetOf<String>()
-                            while (true) {
-                                val cursor = state.value.nextAgentCursor ?: break
-                                check(visited.add(cursor)) { "会话分页未前进，请重新连接主机" }
-                                fetchAgents(cursor = cursor)
-                            }
-                        }
-                        launch { fetchWorkspaceCatalog(subscribe = true) }
-                    }
-                    if (state.value.restoringWorkspace != null) restoreWorkspace()
-                    else state.value.selectedAgentId?.let { selectAgent(it) }
+                    val resumeAgent = state.value.selectedAgentId?.takeIf { id -> state.value.agents.any { it.id == id } }
+                    resumeAgent?.let(::selectAgent)
                     offlineSince = System.nanoTime() / 1_000_000
                     coroutineScope {
+                        launch {
+                            try {
+                                coroutineScope {
+                                    launch {
+                                        fetchAgents(subscribe = true)
+                                        val visited = mutableSetOf<String>()
+                                        while (true) {
+                                            val cursor = state.value.nextAgentCursor ?: break
+                                            check(visited.add(cursor)) { "会话分页未前进，请重新连接主机" }
+                                            fetchAgents(cursor = cursor)
+                                        }
+                                    }
+                                    launch { fetchWorkspaceCatalog(subscribe = true) }
+                                }
+                                if (state.value.restoringWorkspace != null) restoreWorkspace()
+                            } catch (error: Exception) { report(error) }
+                        }
                         // Provider discovery can probe installed CLIs. It must not gate restoration
                         // or tear down an authenticated connection when a provider probe fails.
                         launch {
@@ -190,7 +201,7 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         timelineJob?.cancel()
         publishJob?.cancel()
         socket.disconnect()
-        _state.update { it.copy(connection = ConnectionStatus.Disconnected, loadingTimeline = false, busy = false) }
+        _state.update { it.copy(connection = ConnectionStatus.Disconnected, loadingTimeline = false, syncingTimeline = false, busy = false) }
     }
     fun reconnectNow() {
         reconnectRequests.trySend(Unit)
@@ -214,6 +225,18 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         }
     }
 
+    private suspend fun fetchLatestTimeline(id: String, cursor: JsonObject?, token: Long): JsonObject {
+        var page = socket.request("fetch_agent_timeline_request", "agentId" to id,
+            "direction" to if (cursor == null) "tail" else "after", "cursor" to cursor,
+            "limit" to TIMELINE_FETCH_PAGE_SIZE, "projection" to "projected", "wholeTurns" to true, expectedGeneration = token)
+        if (cursor != null && (page.bool("hasNewer") || page.bool("reset") || page.bool("staleCursor") || page.bool("gap") ||
+                page.string("epoch") != cursor.string("epoch"))) {
+            page = socket.request("fetch_agent_timeline_request", "agentId" to id, "direction" to "tail",
+                "limit" to TIMELINE_FETCH_PAGE_SIZE, "projection" to "projected", "wholeTurns" to true, expectedGeneration = token)
+        }
+        return page
+    }
+
     /** A successful ping proves transport liveness, not that backgrounded subscriptions stayed current. */
     suspend fun recoverForeground() = withContext(dispatcher) {
         val hostId = state.value.host?.id ?: return@withContext
@@ -230,16 +253,7 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
             if (!current()) return@withContext
             val revision = agentRevisions[id] ?: 0
             val cursor = buffer.endSeq?.takeIf { buffer.epoch.isNotBlank() }?.let { jsonObject("epoch" to buffer.epoch, "seq" to it) }
-            var page = socket.request("fetch_agent_timeline_request", "agentId" to id,
-                "direction" to if (cursor == null) "tail" else "after", "cursor" to cursor,
-                "limit" to TIMELINE_FETCH_PAGE_SIZE, "projection" to "projected", expectedGeneration = token)
-            if (!current()) return@withContext
-            // A large gap or invalid cursor goes straight to the latest tail, as in the official foreground recovery.
-            if (page.bool("hasNewer") || page.bool("reset") || page.bool("staleCursor") || page.bool("gap") ||
-                (buffer.epoch.isNotBlank() && page.string("epoch") != buffer.epoch)) {
-                page = socket.request("fetch_agent_timeline_request", "agentId" to id, "direction" to "tail",
-                    "limit" to TIMELINE_FETCH_PAGE_SIZE, "projection" to "projected", "wholeTurns" to true, expectedGeneration = token)
-            }
+            val page = fetchLatestTimeline(id, cursor, token)
             if (current()) {
                 buffer.hydrate(page)
                 applyAgentSnapshot(page, id, revision)
@@ -315,6 +329,16 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
     @Synchronized
     fun cancelWorkspaceRestore() { _state.update { it.copy(restoringWorkspace = null) } }
 
+    @Synchronized
+    private fun restoreKnownWorkspace() {
+        val current = state.value
+        val saved = current.restoringWorkspace ?: return
+        if (current.host?.id != saved.hostId || !current.connected) return
+        val workspace = current.workspaces.find { it.id == saved.workspaceId } ?: return
+        val agent = current.agents.find { it.id == saved.agentId && workspace.contains(it) } ?: return
+        openWorkspace(workspace, agent.id)
+    }
+
     private suspend fun restoreWorkspace() {
         val selection = state.value.restoringWorkspace ?: return
         fun pending() = state.value.host?.id == selection.hostId && state.value.restoringWorkspace == selection
@@ -351,9 +375,11 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
             if ((agentRevisions[agent.id] ?: 0) == (revisions[agent.id] ?: 0)) agent else state.value.agents.find { current -> current.id == agent.id }
         }
         _state.update { current -> current.copy(
-            agents = ((if (cursor != null) current.agents else emptyList()) + agents).distinctBy { it.id }.filter { it.archivedAt == null },
+            agents = ((if (cursor != null) current.agents else listOfNotNull(current.selectedAgent)) + agents)
+                .associateBy { it.id }.values.filter { it.archivedAt == null },
             nextAgentCursor = result.obj("pageInfo").string("nextCursor").ifBlank { null },
         ) }
+        restoreKnownWorkspace()
     }
 
     suspend fun refreshWorkspaces(loadMore: Boolean = false) = withContext(dispatcher) {
@@ -377,9 +403,11 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         if (subscribe) workspaceSubscription = result.string("subscriptionId").ifBlank { null }
         val workspaces = result.array("entries").map { wireJson.decodeFromJsonElement<Workspace>(it) }
         _state.update { current -> current.copy(
-            workspaces = ((if (cursor != null) current.workspaces else emptyList()) + workspaces).distinctBy { it.id },
+            workspaces = ((if (cursor != null) current.workspaces else listOfNotNull(current.selectedWorkspace)) + workspaces)
+                .associateBy { it.id }.values.toList(),
             emptyProjects = if (cursor == null) result.array("emptyProjects").map { wireJson.decodeFromJsonElement<Project>(it) } else current.emptyProjects,
             nextWorkspaceCursor = result.obj("pageInfo").string("nextCursor").ifBlank { null }, catalogLoaded = true) }
+        restoreKnownWorkspace()
     }
     @Synchronized
     fun openWorkspace(workspace: Workspace, preferredAgentId: String? = null) {
@@ -422,27 +450,32 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         val changed = state.value.selectedAgentId != agentId
         // Publish the workspace and agent together, before Compose or persistence can observe them.
         _state.update { it.copy(selectedWorkspaceId = workspaceId, selectedAgentId = agentId,
-            restoringWorkspace = null, timeline = if (changed) emptyList() else it.timeline, loadingTimeline = true, hasOlder = false) }
+            restoringWorkspace = null, timeline = if (changed) emptyList() else it.timeline, loadingTimeline = true, syncingTimeline = true, hasOlder = false) }
         timelineJob = scope.launch {
             if (changed) buffer.clear()
             try {
                 releaseTimeline()
-                val subscription = socket.request("agent.timeline.set_subscription.request", "agentIds" to listOf(agentId))
-                timelineSubscription = subscription.string("subscriptionId").ifBlank { null }
+                val token = socket.connectionToken()
                 val revision = agentRevisions[agentId] ?: 0
-                val payload = socket.request("fetch_agent_timeline_request", "agentId" to agentId,
-                    "direction" to "tail", "limit" to TIMELINE_FETCH_PAGE_SIZE,
-                    "projection" to "projected", "wholeTurns" to true)
-                if (state.value.host?.id == hostId && state.value.selectedAgentId == agentId) {
-                    buffer.hydrate(payload)
-                    applyAgentSnapshot(payload, agentId, revision)
-                    publishTimeline()
+                val cursor = buffer.endSeq?.takeIf { !changed && buffer.epoch.isNotBlank() }
+                    ?.let { jsonObject("epoch" to buffer.epoch, "seq" to it) }
+                coroutineScope {
+                    val subscription = async(start = CoroutineStart.UNDISPATCHED) {
+                        socket.request("agent.timeline.set_subscription.request", "agentIds" to listOf(agentId), expectedGeneration = token)
+                    }
+                    val payload = fetchLatestTimeline(agentId, cursor, token)
+                    if (state.value.host?.id == hostId && state.value.selectedAgentId == agentId && socket.connectionToken() == token) {
+                        buffer.hydrate(payload)
+                        applyAgentSnapshot(payload, agentId, revision)
+                        publishTimeline()
+                    }
+                    timelineSubscription = subscription.await().string("subscriptionId").ifBlank { null }
                 }
             } catch (error: Exception) { report(error) }
             finally {
                 if (isActive) _state.update { current ->
                     if (current.host?.id == hostId && current.selectedAgentId == agentId && current.connected)
-                        current.copy(loadingTimeline = false) else current
+                        current.copy(loadingTimeline = false, syncingTimeline = false) else current
                 }
             }
         }
@@ -455,7 +488,7 @@ class PaseoRepository(private var socket: DaemonSocket = DaemonSocket()) {
         timelineJob?.cancel()
         publishJob?.cancel()
         _state.update { it.copy(selectedWorkspaceId = workspaceId, selectedAgentId = null,
-            restoringWorkspace = null, timeline = emptyList(), hasOlder = false, loadingTimeline = false) }
+            restoringWorkspace = null, timeline = emptyList(), hasOlder = false, loadingTimeline = false, syncingTimeline = false) }
         timelineJob = scope.launch {
             buffer.clear()
             try { releaseTimeline() } catch (_: Exception) { /* Connection cleanup also releases it. */ }

@@ -173,22 +173,9 @@ fun PaseoApp(
                                     Text(workspace.projectDisplayName, modifier = Modifier.weight(1f), style = PaseoUiText.copy(fontSize = 12.sp,
                                         lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
                                         color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    state.host?.let { host ->
+                                    state.host?.takeIf { it.badgeDisplay != "hidden" }?.let { host ->
                                         Text("·", style = PaseoUiText.copy(fontSize = 12.sp, lineHeight = 14.sp), color = LocalPaseoPalette.current.foregroundExtraMuted)
-                                        PaseoGlyph(PaseoIcons.Server, null, Modifier.size(12.dp), LocalPaseoPalette.current.foregroundMuted)
-                                        Text(host.displayName, modifier = Modifier.widthIn(max = 96.dp), style = PaseoUiText.copy(fontSize = 11.sp,
-                                            lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
-                                            color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Box(Modifier.size(6.dp).background(when (state.connection) {
-                                            ConnectionStatus.Connected -> LocalPaseoPalette.current.statusDotSuccess
-                                            ConnectionStatus.Connecting, ConnectionStatus.Reconnecting -> LocalPaseoPalette.current.statusDotWarning
-                                            ConnectionStatus.Disconnected -> LocalPaseoPalette.current.statusDotDanger
-                                        }, RoundedCornerShape(50)))
-                                        Text(connectionLabel(state.connection), style = PaseoUiText.copy(fontSize = 11.sp,
-                                            lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
-                                            color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1,
-                                            modifier = Modifier.clickable(enabled = !state.connected) { vm.connect(host) }
-                                                .semantics { contentDescription = "${host.displayName}，${connectionLabel(state.connection)}${if (state.connected) "" else "，点击重连"}" })
+                                        HostIdentityBadge(host, Modifier.widthIn(max = 96.dp))
                                     }
                                 }
                             }
@@ -254,6 +241,10 @@ fun PaseoApp(
                     Box(Modifier.fillMaxWidth().height(headerHeight + 48.dp).background(Brush.verticalGradient(
                         0f to backdrop, 0.57f to backdrop, 1f to backdrop.copy(alpha = 0f))))
                     header()
+                }
+                if (compactWorkspace && !terminal && state.selectedAgent != null && !composerFullscreen) {
+                    ChatSyncStatus(state, Modifier.align(Alignment.TopCenter)
+                        .padding(top = if (floatingHeader) headerHeight + 12.dp else 12.dp, start = 16.dp, end = 16.dp))
                 }
             }
         }
@@ -432,11 +423,4 @@ fun TextEntryDialog(title: String, initial: String, label: String, onDismiss: ()
     AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { OutlinedTextField(value, { value = it }, label = { Text(label) }) },
         confirmButton = { TextButton(onClick = { onSave(value.trim()) }, enabled = value.isNotBlank()) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
-}
-
-private fun connectionLabel(status: ConnectionStatus) = when (status) {
-    ConnectionStatus.Connected -> "已连接"
-    ConnectionStatus.Connecting -> "连接中…"
-    ConnectionStatus.Reconnecting -> "正在重连…"
-    else -> "未连接"
 }

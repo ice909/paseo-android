@@ -36,6 +36,7 @@ class ConversationControllerTest {
         controller.setDraft(key, "one"); controller.send(key, forceQueue = true)
         controller.setDraft(key, "two"); controller.send(key, forceQueue = true)
         controller.update(snapshot(false).copy(recoveringForeground = true)); runCurrent()
+        controller.update(snapshot(false).copy(syncingTimeline = true)); runCurrent()
         assertTrue(sent.isEmpty())
         controller.update(snapshot(false)); runCurrent()
         assertEquals(listOf("one"), sent)

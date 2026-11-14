@@ -82,6 +82,8 @@ class ForegroundRecoveryTest {
             f.connect()
             val recovery = async { f.repository.recoverForeground() }
             val (peer, payload) = withTimeout(5_000) { f.held.await() }
+            assertTrue(f.repository.state.value.recoveringForeground)
+            assertFalse(f.repository.state.value.syncingTimeline)
             peer.send(DaemonSocketTest.session("agent_stream", jsonObject("agentId" to "a", "event" to jsonObject("type" to "turn_started", "turnId" to "background-turn"))))
             withTimeout(5_000) { f.repository.state.first { it.selectedAgent?.running == true } }
             peer.send(DaemonSocketTest.session("fetch_agent_timeline_response", payload))

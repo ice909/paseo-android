@@ -86,6 +86,7 @@ class WorkspaceRestorationTest {
             assertFalse(f.requests.any { it.string("type") == "fetch_agent_timeline_request" })
             f.releaseAgents()
             val restored = f.restored()
+            assertFalse(restored.syncingTimeline)
             assertEquals(saved, restored.workspaceSelection())
             assertEquals("saved", restored.timeline.single().text)
             assertEquals(listOf("saved"), f.requests.filter { it.string("type") == "fetch_agent_timeline_request" }.map { it.string("agentId") })

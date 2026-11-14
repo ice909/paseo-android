@@ -23,10 +23,10 @@ internal fun hostIdentityColor(name: String): Color {
 
 /** Shared with the sidebar so the settings preview uses the actual badge. */
 @Composable
-internal fun HostIdentityBadge(host: Host) {
+internal fun HostIdentityBadge(host: Host, modifier: Modifier = Modifier) {
     if (host.badgeDisplay == "hidden") return
     val color = hostIdentityColor(host.color)
-    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         PaseoGlyph(PaseoIcons.Server, host.displayName.takeIf { host.badgeDisplay == "icon" }, Modifier.size(12.dp), color)
         if (host.badgeDisplay == "name") Text(host.displayName, fontSize = 12.sp, lineHeight = 16.sp, color = color, maxLines = 1)
     }

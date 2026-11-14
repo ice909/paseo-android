@@ -134,6 +134,7 @@ data class PaseoState(
     val hasOlder: Boolean = false,
     val loadingTimeline: Boolean = false,
     val recoveringForeground: Boolean = false,
+    val syncingTimeline: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
 ) {
