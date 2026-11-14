@@ -170,7 +170,7 @@ fun PaseoApp(
                                         fontWeight = FontWeight.Medium, platformStyle = PlatformTextStyle(includeFontPadding = false)),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (compactWorkspace && workspace != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(workspace.projectDisplayName, modifier = Modifier.weight(1f), style = PaseoUiText.copy(fontSize = 12.sp,
+                                    Text(workspace.projectDisplayName, modifier = Modifier.weight(1f, fill = false), style = PaseoUiText.copy(fontSize = 12.sp,
                                         lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
                                         color = LocalPaseoPalette.current.foregroundMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     state.host?.takeIf { it.badgeDisplay != "hidden" }?.let { host ->
