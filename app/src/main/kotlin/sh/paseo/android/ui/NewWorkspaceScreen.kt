@@ -29,23 +29,28 @@ import sh.paseo.android.core.*
 fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace?, initialProject: String?,
     onManageHosts: () -> Unit, onImportCwd: (String) -> Unit, onCreated: (Boolean) -> Unit) {
     val p = LocalPaseoPalette.current
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("create_agent", 0) }
     val creating by vm.creating.collectAsStateWithLifecycle()
     val hosts by vm.hosts.collectAsStateWithLifecycle()
     val sessions by vm.conversations.sessions.collectAsStateWithLifecycle()
     val imports by vm.importingAttachments.collectAsStateWithLifecycle()
     val audio by vm.audio.state.collectAsStateWithLifecycle()
     val available = state.providers.filter { it.available }
-    var provider by rememberSaveable(state.host?.id, workspace?.id) { mutableStateOf("") }
+    var provider by rememberSaveable(state.host?.id, workspace?.id) { mutableStateOf(preferences.getString("provider", "").orEmpty()) }
     var projectId by rememberSaveable(state.host?.id, initialProject, workspace?.id) { mutableStateOf(initialProject.orEmpty()) }
     val project = state.projects.find { it.projectId == projectId }
     var cwd by rememberSaveable(state.host?.id, initialProject, workspace?.id) { mutableStateOf(workspace?.cwd.orEmpty()) }
-    var model by rememberSaveable(state.host?.id) { mutableStateOf("") }
-    var mode by rememberSaveable(state.host?.id) { mutableStateOf("") }
+    var model by rememberSaveable(state.host?.id) { mutableStateOf(preferences.getString("model:$provider", "").orEmpty()) }
+    var mode by rememberSaveable(state.host?.id) { mutableStateOf(preferences.getString("mode:$provider", "").orEmpty()) }
     var worktree by rememberSaveable(state.host?.id, initialProject) { mutableStateOf(false) }
     var baseRef by rememberSaveable(state.host?.id, projectId) { mutableStateOf("") }
     var terminal by rememberSaveable(workspace?.id) { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
     var modes by remember { mutableStateOf<List<ModeOption>>(emptyList()) }
+    var browserProvider by rememberSaveable { mutableStateOf("") }
+    var browserModels by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
+    var browserLoading by remember { mutableStateOf(false) }
     var branches by remember { mutableStateOf<List<String>>(emptyList()) }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var submitted by rememberSaveable(state.host?.id, workspace?.id, initialProject) { mutableStateOf(false) }
@@ -72,7 +77,6 @@ fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace
     val latestSubmit by rememberUpdatedState(::submit)
     LaunchedEffect(cwd, state.host?.id) { onImportCwd(cwd) }
     LaunchedEffect(key) { vm.homeSubmitRequests.collect { if (it == key) latestSubmit() } }
-    LaunchedEffect(available.map { it.provider }) { if (provider.isBlank()) provider = available.firstOrNull()?.provider.orEmpty() }
     LaunchedEffect(project?.projectRootPath) { if (project != null) cwd = project.projectRootPath }
     LaunchedEffect(provider, cwd, state.connected) {
         models = emptyList(); modes = emptyList()
@@ -81,6 +85,15 @@ fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace
         try { models = vm.repository.models(provider, cwd); modes = vm.repository.modes(provider, cwd) }
         catch (e: CancellationException) { throw e }
         catch (_: Exception) { /* The provider's defaults remain selectable. */ }
+    }
+    LaunchedEffect(sheet, browserProvider, cwd, state.connected) {
+        browserModels = emptyList()
+        if (sheet != "models" || browserProvider.isBlank() || !state.connected) return@LaunchedEffect
+        browserLoading = true
+        try { browserModels = vm.repository.models(browserProvider, cwd).filter { it.isSelectable } }
+        catch (e: CancellationException) { throw e }
+        catch (_: Exception) { vm.notices.tryEmit("无法读取模型，请检查主机连接后重试") }
+        finally { browserLoading = false }
     }
     LaunchedEffect(sheet, search, cwd, state.connected) {
         branches = emptyList()
@@ -98,7 +111,6 @@ fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace
         catch (e: CancellationException) { throw e }
         catch (_: Exception) { /* Manual absolute paths still work. */ }
     }
-    val context = LocalContext.current
     val documents = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.attachFiles(key, uris) }
     val microphone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) vm.audio.start(key, false) else vm.notices.tryEmit("需要麦克风权限才能使用语音")
@@ -155,17 +167,40 @@ fun NewWorkspaceScreen(vm: AppViewModel, state: PaseoState, workspace: Workspace
             }, options = {
                 if (!terminal) {
                     IconButton(onClick = { sheet = "attach" }, enabled = editable && !dictating && !importing, modifier = Modifier.size(28.dp)) { PaseoGlyph(PaseoIcons.Plus, "添加附件", Modifier.size(20.dp), p.foregroundMuted) }
-                    ComposerChoice(models.find { it.id == model }?.displayName ?: "默认模型",
-                        available.map { "provider:${it.provider}" to "代理：${it.provider}" } + listOf("model:" to "默认模型") + models.map { "model:${it.id}" to it.displayName }, editable, PaseoIcons.provider(provider)) { selection ->
-                        if (selection.startsWith("provider:")) { provider = selection.removePrefix("provider:"); model = ""; mode = "" }
-                        else model = selection.removePrefix("model:")
+                    val selectedModel = models.find { it.id == model || model in it.aliases }
+                        ?: if (model.isBlank()) models.firstOrNull { it.isSelectable && it.isDefault } ?: models.firstOrNull { it.isSelectable } else null
+                    Row(Modifier.height(28.dp).clickable(enabled = editable) { browserProvider = ""; sheet = "models" }.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (provider.isNotBlank()) PaseoGlyph(PaseoIcons.provider(provider), null, Modifier.size(14.dp), p.foregroundMuted)
+                        PaseoText(selectedModel?.displayName ?: model.ifBlank { "选择模型" }, Modifier.padding(start = 4.dp), color = p.foregroundMuted, style = PaseoUiText.copy(fontSize = 14.sp), maxLines = 1)
+                        PaseoGlyph(PaseoIcons.ChevronDown, null, Modifier.size(14.dp), p.foregroundExtraMuted)
                     }
-                    if (modes.isNotEmpty()) ComposerChoice(modes.find { it.id == mode }?.displayName ?: "默认模式", listOf("" to "默认模式") + modes.map { it.id to it.displayName }, editable) { mode = it }
+                    if (modes.isNotEmpty()) ComposerChoice(modes.find { it.id == mode }?.displayName ?: "默认模式", listOf("" to "默认模式") + modes.map { it.id to it.displayName }, editable) {
+                        mode = it; preferences.edit().putString("mode:$provider", it).apply()
+                    }
                 }
             })
     }
-    if (sheet.isNotBlank()) WorkspacePicker(when (sheet) { "project" -> "选择项目"; "directory" -> "添加项目"; "host" -> "选择主机"; "isolation" -> "隔离"; "base" -> "选择分支"; "attach" -> "添加附件"; else -> "What to launch" }, { sheet = "" }) {
+    if (sheet.isNotBlank()) WorkspacePicker(when (sheet) { "project" -> "选择项目"; "directory" -> "添加项目"; "host" -> "选择主机"; "isolation" -> "隔离"; "base" -> "选择分支"; "attach" -> "添加附件"; "models" -> if (browserProvider.isBlank()) "选择模型" else browserProvider; else -> "What to launch" }, { sheet = "" }) {
         when (sheet) {
+            "models" -> {
+                WorkspaceSearch(search, { search = it }, if (browserProvider.isBlank()) "搜索代理" else "搜索模型")
+                if (browserProvider.isBlank()) {
+                    available.filter { it.provider.contains(search, true) }.forEach { item ->
+                        WorkspaceOption(item.provider, icon = PaseoIcons.provider(item.provider)) { browserProvider = item.provider; search = "" }
+                    }
+                } else {
+                    WorkspaceOption("所有代理", icon = PaseoIcons.ChevronDown) { browserProvider = ""; search = "" }
+                    if (browserLoading) PaseoText("加载中…", color = p.foregroundMuted)
+                    browserModels.filter { it.displayName.contains(search, true) || it.id.contains(search, true) }.forEach { item ->
+                        WorkspaceOption(item.displayName, provider == browserProvider && (model == item.id || (model.isBlank() && item.id == (browserModels.firstOrNull { it.isDefault } ?: browserModels.firstOrNull())?.id)), icon = PaseoIcons.provider(browserProvider)) {
+                            provider = browserProvider; model = item.id
+                            mode = preferences.getString("mode:$provider", "").orEmpty()
+                            preferences.edit().putString("provider", provider).putString("model:$provider", model).apply()
+                            sheet = ""
+                        }
+                    }
+                }
+            }
             "project" -> {
                 WorkspaceSearch(search, { search = it }, "搜索项目")
                 state.projects.filter { it.projectDisplayName.contains(search, true) || it.projectRootPath.contains(search, true) }.forEach { item ->
